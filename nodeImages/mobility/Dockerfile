@@ -1,5 +1,5 @@
 # parameters
-ARG REPO_NAME="custom-utilities"
+ARG REPO_NAME="mobility"
 ARG DESCRIPTION="DESCRIPTION_HERE"
 ARG MAINTAINER="Sergio Geronimo Parras (sergiogeronimoparras@gmail.com)"
 # pick an icon from: https://fontawesome.com/v4.7.0/icons/

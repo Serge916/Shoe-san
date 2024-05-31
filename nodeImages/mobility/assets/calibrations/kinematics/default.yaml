@@ -1,0 +1,12 @@
+baseline: 0.108
+gain: 1.0
+k: 27.0
+limit: 1.0
+radius: 0.033
+trim: 0.0
+kp_angular: 15
+ki_angular: 1
+kd_angular: 0.2
+kp_linear: 15
+ki_linear: 1
+kd_linear: 0.2
