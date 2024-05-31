@@ -21,7 +21,7 @@ from solution.integration_activity import (
     filter_by_scores,
 )
 
-NUM_OF_CLASSES = 4
+NUM_OF_CLASSES = 2
 
 
 class ObjectDetectionNode(DTROS):
@@ -113,7 +113,7 @@ class ObjectDetectionNode(DTROS):
 
         # as soon as we get one detection we will stop forever
         if detection:
-            self.log("Duckie pedestrian detected... stopping")
+            self.log("Shoe pedestrian detected... stopping")
             self.avoid_duckies = True
 
         self.pub_car_commands(self.avoid_duckies, image_msg.header)
@@ -121,11 +121,9 @@ class ObjectDetectionNode(DTROS):
         if self._debug:
             colors = {
                 0: (0, 255, 255),
-                1: (0, 165, 255),
-                2: (0, 250, 0),
-                3: (0, 0, 255),
+                1: (0, 165, 255)
             }
-            names = {0: "duckie", 1: "cone", 2: "truck", 3: "bus"}
+            names = {0: "People", 1: "Shoe"}
             font = cv2.FONT_HERSHEY_SIMPLEX
             for clas, box in zip(classes, bboxes):
                 pt1 = np.array([int(box[0]), int(box[1])])
