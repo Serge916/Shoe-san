@@ -43,13 +43,23 @@ class MobilityNode(DTROS):
         self.veh = rospy.get_namespace().strip("/")
 
         # internal state
+        # - encoders
+        self.delta_phi_left = 0.0
+        self.left_tick_prev = None
+
+        self.delta_phi_right = 0.0
+        self.right_tick_prev = None
+
         # - odometry
-        self.x_prev = 0.0
-        self.y_prev = 0.0
-        self.theta_prev = 0.0
+        self.orientation_curr = 0.0
+        self.orientation_prev = 0.0
+        self.ditance_curr = 0.0
+        self.distance_prev = 0.0
+
         self.x_curr = 0.0
         self.y_curr = 0.0
         self.theta_curr = 0.0
+        # - commanded
         self.x_target = 0.0
         self.y_target = 0.0
         self.theta_target = 0.0
@@ -58,24 +68,20 @@ class MobilityNode(DTROS):
         self.kp_angular = 0
         self.ki_angular = 0
         self.kd_angular = 0
+        self.kp_linear = 0
+        self.ki_linear = 0
+        self.kd_linear = 0
 
-        self.error_x = 0.0
-        self.error_y = 0.0
-        self.error_theta = 0.0
-        self.prev_error_x = 0.0
-        self.prev_error_x_int = 0.0
-        self.prev_error_y = 0.0
-        self.prev_error_y_int = 0.0
-        self.prev_error_theta = 0.0
-        self.prev_error_theta_int = 0.0
+        self.prev_error_orientation_int = 0.0
+        self.prev_error_orientation = 0.0
+        self.prev_error_distance_int = 0.0
+        self.prev_error_distance = 0.0
 
         self.time_now: float = 0.0
         self.time_last_step: float = 0.0
 
         # fixed robot linear velocity - starts at zero so the activities start on command
-        self.v = 0.0
-
-        # initializing omega command to the robot
+        self.velocity = 0.0
         self.omega = 0.0
 
         # Init the parameters
@@ -133,28 +139,39 @@ class MobilityNode(DTROS):
         self.delta_phi_right = 0.0
         self.right_tick_prev = None
 
-        # Initializing the odometry
-        self.x_prev = 0.0
-        self.y_prev = 0.0
-        self.theta_prev = 0.0
+        # - odometry
+        self.orientation_curr = 0.0
+        self.orientation_prev = 0.0
+        self.ditance_curr = 0.0
+        self.distance_prev = 0.0
 
         self.x_curr = 0.0
         self.y_curr = 0.0
         self.theta_curr = 0.0
+        # - commanded
+        self.x_target = 0.0
+        self.y_target = 0.0
+        self.theta_target = 0.0
 
-        # Initializing the PID controller parameters
-        self.prev_e = 0.0  # previous tracking error, starts at 0
-        self.prev_int = 0.0  # previous tracking error integral, starts at 0
+        # - PID controller
+        self.kp_angular = 0
+        self.ki_angular = 0
+        self.kd_angular = 0
+        self.kp_linear = 0
+        self.ki_linear = 0
+        self.kd_linear = 0
+
+        self.prev_error_orientation_int = 0.0
+        self.prev_error_orientation = 0.0
+        self.prev_error_distance_int = 0.0
+        self.prev_error_distance = 0.0
+
         self.time_now: float = 0.0
         self.time_last_step: float = 0.0
-        self.kp_angular: float = 0.0
-        self.ki_angular: float = 0.0
-        self.kd_angular: float = 0.0
 
         # fixed robot linear velocity - starts at zero so the activities start on command
         self.velocity = 0.0
-        self.y_ref = 0.0
-        self.v_ref = 0.0
+        self.omega = 0.0
 
     def cbLeftEncoder(self, encoder_msg):
         """
@@ -267,42 +284,42 @@ class MobilityNode(DTROS):
         delta_time = self.time_now - self.time_last_step
         self.time_last_step = self.time_now
 
-        self.error_x = self.x_target - self.x_curr
-        self.prev_error_x_int = self.error_x * delta_time + self.prev_error_x_int
-        error_x_der = (self.error_x - self.prev_error_x) / delta_time
+        error_x = self.x_target - self.x_curr
+        error_y = self.y_target - self.y_curr
 
-        self.error_y = self.y_target - self.y_curr
-        self.prev_error_y_int = self.error_y * delta_time + self.prev_error_y_int
-        error_y_der = (self.error_y - self.prev_error_y) / delta_time
-
-        self.error_theta = self.theta_target - self.theta_curr
-        self.prev_error_theta_int = (
-            self.error_theta * delta_time + self.prev_error_theta_int
+        error_orientation = self.angle_clamp(
+            np.arctan2(error_y / error_x) - self.theta_curr
         )
-        error_theta_der = (self.error_theta - self.prev_error_theta) / delta_time
+        error_distance = np.sqrt(error_x**2 + error_y**2)
 
-        if abs(self.error_x) <= 0.2 or abs(self.error_y) <= 0.2:
-            # Already in place, just turn around
-            omega = (
-                self.kp_angular * self.error_theta
-                + self.ki_angular * self.prev_error_theta_int
-                + self.kd_angular * error_theta_der
-            )
-            velocity = 0.2
-        else:
-            # TO DO: Have orientation and change omega to follow it
-            omega = (
-                self.kp_angular * self.error
-                + self.ki_angular * self.error_int
-                + self.kd_angular * self.error_der
-            )
-            velocity = (
-                self.kp_linear * self.error
-                + self.ki_linear * self.error_int
-                + self.kd_linear * self.error_der
-            )
+        error_orientation_int = (
+            error_orientation * delta_time + self.prev_error_orientation_int
+        )
+        error_orientation_der = (
+            error_orientation - self.prev_error_orientation
+        ) / delta_time
+
+        error_distance_int = error_distance * delta_time + self.prev_error_distance_int
+        error_distance_der = (error_distance - self.prev_error_distance) / delta_time
+
+        omega = (
+            self.kp_angular * error_orientation
+            + self.ki_angular * error_orientation_int
+            + self.kd_angular * error_orientation_der
+        )
+        velocity = (
+            self.kp_linear * error_distance
+            + self.ki_linear * error_distance_int
+            + self.kd_linear * error_distance_der
+        )
 
         self.publishCmd(velocity, omega)
+
+        self.prev_error_distance = error_distance
+        self.prev_error_orientation = error_orientation
+
+        self.prev_error_distance_int = error_distance_int
+        self.prev_error_orientation_int = error_orientation_int
 
     def publishCmd(self, v, omega):
         """
@@ -364,7 +381,7 @@ class MobilityNode(DTROS):
     def angle_clamp(theta):
         if theta > 2 * np.pi:
             return theta - 2 * np.pi
-        elif theta < -2 * np.pi:
+        elif theta < 0:
             return theta + 2 * np.pi
         else:
             return theta
