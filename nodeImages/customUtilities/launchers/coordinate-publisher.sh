@@ -5,9 +5,8 @@ source /environment.sh
 # initialize launch file
 dt-launchfile-init
 
-# launch subscriber
-# export VEHICLE_NAME="db3"
-rosrun customPackage pid_control.py
+# launch publisher
+rosrun customPackage coordinate_publisher.py
 
 # wait for app to end
 dt-launchfile-join

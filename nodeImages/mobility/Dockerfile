@@ -62,6 +62,7 @@ RUN dt-pip3-install "${REPO_PATH}/dependencies-py3.*"
 
 # copy the source code
 COPY ./packages "${REPO_PATH}/packages"
+COPY ./assets "${REPO_PATH}/assets"
 
 # build packages
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh && \

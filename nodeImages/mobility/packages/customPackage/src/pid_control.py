@@ -40,7 +40,7 @@ class MobilityNode(DTROS):
         )
         self.log("Initializing...")
         # get the name of the robot
-        self.veh = rospy.get_namespace().strip("/")
+        self.veh = os.environ["VEHICLE_NAME"]
 
         # internal state
         # - encoders
@@ -110,10 +110,11 @@ class MobilityNode(DTROS):
         rospy.Subscriber(
             target_coordinate_topic, Pose2DStamped, self.triggerController, queue_size=1
         )
+        print(target_coordinate_topic)
 
         # Odometry publisher
         self.db_estimated_pose = rospy.Publisher(
-            f"/{self.veh}/encoder_localization",
+            f"/{self.veh}/encoder_odometry",
             Odometry,
             queue_size=1,
             dt_topic_type=TopicType.LOCALIZATION,
@@ -270,6 +271,7 @@ class MobilityNode(DTROS):
         self.Controller()
 
     def triggerController(self, coordinate_msg):
+        self.log("Received command!")
         self.x_target = coordinate_msg.x
         self.y_target = coordinate_msg.y
         self.theta_target = coordinate_msg.theta
@@ -351,6 +353,7 @@ class MobilityNode(DTROS):
         file_path = (
             "/code/catkin_ws/src/mobility/assets/calibrations/kinematics/default.yaml"
         )
+
         if not os.path.isfile(file_path):
             self.logfatal("Kinematics calibration %s not found!" % file_path)
             rospy.signal_shutdown("")
