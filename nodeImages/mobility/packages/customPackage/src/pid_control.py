@@ -58,7 +58,10 @@ class MobilityNode(DTROS):
 
         self.x_curr = 0.0
         self.y_curr = 0.0
+        self.x_prev = 0.0
+        self.y_prev = 0.0
         self.theta_curr = 0.0
+        self.theta_prev = 0.0
         # - commanded
         self.x_target = 0.0
         self.y_target = 0.0
@@ -162,6 +165,8 @@ class MobilityNode(DTROS):
         self.ki_linear = 0
         self.kd_linear = 0
 
+        self.prev_error_theta_int = 0.0
+        self.prev_error_theta = 0.0
         self.prev_error_orientation_int = 0.0
         self.prev_error_orientation = 0.0
         self.prev_error_distance_int = 0.0
@@ -271,10 +276,12 @@ class MobilityNode(DTROS):
         self.Controller()
 
     def triggerController(self, coordinate_msg):
-        self.log("Received command!")
         self.x_target = coordinate_msg.x
         self.y_target = coordinate_msg.y
         self.theta_target = coordinate_msg.theta
+        self.log(
+            f"Received command!: Moving from ({self.x_curr},{self.y_curr}, {self.theta_curr}) to ({self.x_target},{self.y_target},{self.theta_target})"
+        )
 
         self.Controller()
 
@@ -284,31 +291,49 @@ class MobilityNode(DTROS):
         """
 
         delta_time = self.time_now - self.time_last_step
+        # Avoid division by zero
+        if delta_time <= 0:
+            delta_time = 0.01
+
         self.time_last_step = self.time_now
 
         error_x = self.x_target - self.x_curr
         error_y = self.y_target - self.y_curr
 
-        error_orientation = self.angle_clamp(
-            np.arctan2(error_y / error_x) - self.theta_curr
-        )
         error_distance = np.sqrt(error_x**2 + error_y**2)
-
-        error_orientation_int = (
-            error_orientation * delta_time + self.prev_error_orientation_int
-        )
-        error_orientation_der = (
-            error_orientation - self.prev_error_orientation
-        ) / delta_time
 
         error_distance_int = error_distance * delta_time + self.prev_error_distance_int
         error_distance_der = (error_distance - self.prev_error_distance) / delta_time
 
-        omega = (
-            self.kp_angular * error_orientation
-            + self.ki_angular * error_orientation_int
-            + self.kd_angular * error_orientation_der
-        )
+        # If close to the coordinates
+        if abs(error_distance) > 0.2:
+            error_orientation = self.angle_clamp(
+                np.arctan2(error_y, error_x) - self.theta_curr
+            )
+            error_orientation_int = (
+                error_orientation * delta_time + self.prev_error_orientation_int
+            )
+            error_orientation_der = (
+                error_orientation - self.prev_error_orientation
+            ) / delta_time
+
+            omega = (
+                self.kp_angular * error_orientation
+                + self.ki_angular * error_orientation_int
+                + self.kd_angular * error_orientation_der
+            )
+        # If far from the coordinates
+        else:
+            error_theta = self.theta_target - self.theta_curr
+            error_theta_int = error_theta * delta_time + self.prev_error_theta_int
+            error_theta_der = (error_theta - self.prev_error_theta) / delta_time
+
+            omega = (
+                self.kp_angular * error_theta
+                + self.ki_angular * error_theta_int
+                + self.kd_angular * error_theta_der
+            )
+
         velocity = (
             self.kp_linear * error_distance
             + self.ki_linear * error_distance_int
@@ -318,10 +343,16 @@ class MobilityNode(DTROS):
         self.publishCmd(velocity, omega)
 
         self.prev_error_distance = error_distance
-        self.prev_error_orientation = error_orientation
-
         self.prev_error_distance_int = error_distance_int
-        self.prev_error_orientation_int = error_orientation_int
+
+        # If close to the coordinates
+        if abs(error_distance) > 0.2:
+            self.prev_error_orientation = error_orientation
+            self.prev_error_orientation_int = error_orientation_int
+        # If far from the coordinates
+        else:
+            self.prev_error_theta = error_theta
+            self.prev_error_theta_int = error_theta_int
 
     def publishCmd(self, v, omega):
         """
