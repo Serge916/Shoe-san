@@ -3,6 +3,7 @@
 import rospy
 from duckietown.dtros import DTROS, NodeType
 from std_msgs.msg import String
+from duckietown_msgs.msg import Pose2DStamped
 
 
 class MySubscriberNode(DTROS):
@@ -13,10 +14,10 @@ class MySubscriberNode(DTROS):
             node_name=node_name, node_type=NodeType.GENERIC
         )
         # construct subscriber
-        self.sub = rospy.Subscriber("alive", String, self.callback)
+        self.sub = rospy.Subscriber("/db3/path_planner_node/path_planner/coordinates", Pose2DStamped, self.callback)
 
     def callback(self, data):
-        rospy.loginfo("I heard '%s'", data.data)
+        rospy.loginfo("I heard x: %d, y: %d. theta: %d, \n", data.x, data.y, data.theta)
 
 
 if __name__ == "__main__":
