@@ -5,7 +5,7 @@ import numpy as np
 import rospy
 
 from duckietown.dtros import DTROS, NodeType, TopicType
-from duckietown_msgs.msg import Twist2DStamped
+from duckietown_msgs.msg import Twist2DStamped, Rects, Rect, SceneSegments
 from cv_bridge import CvBridge
 from sensor_msgs.msg import CompressedImage
 
@@ -35,20 +35,39 @@ class ObjectDetectionNode(DTROS):
         self.veh = rospy.get_namespace().strip("/")
         self.avoid_duckies = False
 
-        # Construct publishers
+        ## Construct publishers
         car_cmd_topic = f"/{self.veh}/joy_mapper_node/car_cmd"
         self.pub_car_cmd = rospy.Publisher(
             car_cmd_topic, Twist2DStamped, queue_size=1, dt_topic_type=TopicType.CONTROL
         )
-
+        
+        # Debug image with rectangles
         self.pub_detections_image = rospy.Publisher(
-            "~image/compressed",
+            "~image/debug_compressed",
             CompressedImage,
             queue_size=1,
             dt_topic_type=TopicType.DEBUG,
         )
 
-        # Construct subscribers
+        # Image with bounding boxes for the clasifier
+        self.pub_image_for_class = rospy.Publisher(
+            "~image/img_and_bboxes",
+            SceneSegments,
+            queue_size=1,
+            buff_size=10000000,
+            dt_topic_type=TopicType.VISUALIZATION,
+        )
+
+        # Bounding boxes people
+        self.bboxes_people = rospy.Publisher(
+            "~image/bboxes_people",
+            Rects,
+            queue_size=1,
+            buff_size=10000000,
+            dt_topic_type=TopicType.VISUALIZATION,
+        )
+
+        ## Construct subscribers
         self.sub_image = rospy.Subscriber(
             f"/{self.veh}/camera_node/image/compressed",
             CompressedImage,
@@ -95,22 +114,46 @@ class ObjectDetectionNode(DTROS):
 
         detection = self.det2bool(bboxes, classes, scores)
 
-        # as soon as we get one detection we will stop forever
+        # as soon as we get one detection we will stop forever TODO check of removing pedestrian stop
         if detection:
             self.log("Shoe pedestrian detected... stopping")
             self.avoid_duckies = True
 
         self.pub_car_commands(self.avoid_duckies, image_msg.header)
 
-        if self._debug:
-            colors = {
-                0: (0, 255, 255),
-                1: (0, 165, 255)
-            }
-            names = {0: "People", 1: "Shoe"}
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            for clas, box in zip(classes, bboxes):
-                pt1 = np.array([int(box[0]), int(box[1])])
+        names = {0: "People", 1: "Shoe"}
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        shoe_bboxes = SceneSegments()
+        shoe_bboxes.segimage.header = image_msg.header
+        # TODO! Check if I have to copy the data not only the pointer (probably but I forgot how python works)
+        shoe_bboxes.segimage.data = image_msg.data
+        shoe_bboxes.rects = []
+        people_bboxes = []
+
+        for clas, box in zip(classes, bboxes):
+            # TODO! Check the signs of these values
+            rect = Rect()
+
+            rect.x = int(box[0])
+            rect.y = int(box[1])
+            rect.w = int(box[2]) - rect.x
+            rect.h = int(box[3]) - rect.y
+
+            if clas == 0:
+                # Then it has detected people, so we populate the info for the people_bboxes
+                people_bboxes.append(rect)
+            elif clas == 1:
+                # Then it has detected a shoe, so populetes the message for the classifier
+                shoe_bboxes.rects.append(rect)
+
+            if self._debug:
+                colors = {
+                    0: (0, 255, 255),
+                    1: (0, 165, 255)
+                }
+
+                pt1 = np.array([rect.x, rect.y])
                 pt2 = np.array([int(box[2]), int(box[3])])
                 pt1 = tuple(pt1)
                 pt2 = tuple(pt2)
@@ -123,9 +166,15 @@ class ObjectDetectionNode(DTROS):
                 # draw label underneath the bounding box
                 rgb = cv2.putText(rgb, name, text_location, font, 1, color, thickness=2)
 
-            bgr = rgb[..., ::-1]
-            obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
-            self.pub_detections_image.publish(obj_det_img)
+                bgr = rgb[..., ::-1]
+                obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
+                self.pub_detections_image.publish(obj_det_img)
+
+        if (len(shoe_bboxes.rects) != 0):
+            self.pub_image_for_class.publish(shoe_bboxes)
+        
+        if (len(people_bboxes) != 0):
+            self.bboxes_people.publish(people_bboxes)
 
     def det2bool(self, bboxes, classes, scores):
         box_ids = np.array(list(map(filter_by_bboxes, bboxes))).nonzero()[0]
