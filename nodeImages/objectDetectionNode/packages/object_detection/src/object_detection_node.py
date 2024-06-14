@@ -3,6 +3,8 @@
 import cv2
 import numpy as np
 import rospy
+from typing import Tuple
+import os
 
 from duckietown.dtros import DTROS, NodeType, TopicType
 from duckietown_msgs.msg import Twist2DStamped, Rects, Rect, SceneSegments
@@ -13,14 +15,46 @@ from sensor_msgs.msg import CompressedImage
 from nn_model.constants import IMAGE_SIZE
 from nn_model.model import Wrapper
 
-from solution.integration_activity import (
-    NUMBER_FRAMES_SKIPPED,
-    filter_by_classes,
-    filter_by_bboxes,
-    filter_by_scores,
-)
 
+NUMBER_FRAMES_SKIPPED = 5
 NUM_OF_CLASSES = 2
+
+def filter_by_classes(pred_class: int) -> bool:
+    """
+    Remember the class IDs:
+
+        | Object    | ID    |
+        | ---       | ---   |
+        | People    | 0     |
+        | Shoe      | 1     |
+
+
+    Args:
+        pred_class: the class of a prediction
+    """
+
+    return True if pred_class == 0 or pred_class == 1 else False
+
+
+def filter_by_scores(score: float) -> bool:
+    """
+    Args:
+        score: the confidence score of a prediction
+    """
+
+    return True if score > 0.5 else False
+    
+
+def filter_by_bboxes(bbox: Tuple[int, int, int, int]) -> bool:
+    """
+    Args:
+        bbox: is the bounding box of a prediction, in xyxy format
+                This means the shape of bbox is (leftmost x pixel, topmost y, rightmost x, bottommost y)
+    """
+
+    # TODO: Like in the other cases, return False if the bbox should not be considered.
+    return True
+
 
 class ObjectDetectionNode(DTROS):
     def __init__(self, node_name):
@@ -32,15 +66,9 @@ class ObjectDetectionNode(DTROS):
         self.initialized = False
         self.log("Initializing!")
 
-        self.veh = rospy.get_namespace().strip("/")
-        self.avoid_duckies = False
+        self.veh = os.environ["VEHICLE_NAME"]
 
         ## Construct publishers
-        car_cmd_topic = f"/{self.veh}/joy_mapper_node/car_cmd"
-        self.pub_car_cmd = rospy.Publisher(
-            car_cmd_topic, Twist2DStamped, queue_size=1, dt_topic_type=TopicType.CONTROL
-        )
-        
         # Debug image with rectangles
         self.pub_detections_image = rospy.Publisher(
             "~image/debug_compressed",
@@ -54,7 +82,6 @@ class ObjectDetectionNode(DTROS):
             "~image/img_and_bboxes",
             SceneSegments,
             queue_size=1,
-            buff_size=10000000,
             dt_topic_type=TopicType.VISUALIZATION,
         )
 
@@ -63,7 +90,6 @@ class ObjectDetectionNode(DTROS):
             "~image/bboxes_people",
             Rects,
             queue_size=1,
-            buff_size=10000000,
             dt_topic_type=TopicType.VISUALIZATION,
         )
 
@@ -78,24 +104,21 @@ class ObjectDetectionNode(DTROS):
 
         self.bridge = CvBridge()
 
-        self.v = rospy.get_param("~speed", 0.4)
         self.log("Starting model loading!")
+        self.model_wrapper = Wrapper(False)
         self._debug = rospy.get_param("~debug", False)
         self.log("Finished model loading!")
         self.frame_id = 0
-        self.first_image_received = False
         self.initialized = True
         self.log("Initialized!")
 
     def image_cb(self, image_msg):
         if not self.initialized:
-            self.pub_car_commands(True, image_msg.header)
             return
 
         self.frame_id += 1
         self.frame_id = self.frame_id % (1 + NUMBER_FRAMES_SKIPPED())
         if self.frame_id != 0:
-            self.pub_car_commands(self.avoid_duckies, image_msg.header)
             return
 
         # Decode from compressed image with OpenCV
@@ -114,12 +137,8 @@ class ObjectDetectionNode(DTROS):
 
         detection = self.det2bool(bboxes, classes, scores)
 
-        # as soon as we get one detection we will stop forever TODO check of removing pedestrian stop
-        if detection:
-            self.log("Shoe pedestrian detected... stopping")
-            self.avoid_duckies = True
-
-        self.pub_car_commands(self.avoid_duckies, image_msg.header)
+        if not detection:
+            return
 
         names = {0: "People", 1: "Shoe"}
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -188,19 +207,6 @@ class ObjectDetectionNode(DTROS):
             return True
         else:
             return False
-
-    def pub_car_commands(self, stop, header):
-        car_control_msg = Twist2DStamped()
-        car_control_msg.header = header
-        if stop:
-            car_control_msg.v = 0.0
-        else:
-            car_control_msg.v = self.v
-
-        # always drive straight
-        car_control_msg.omega = 0.0
-
-        self.pub_car_cmd.publish(car_control_msg)
 
 if __name__ == "__main__":
     # Initialize the node

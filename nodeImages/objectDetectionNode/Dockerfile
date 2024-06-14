@@ -67,13 +67,6 @@ RUN git clone -b v7.0 https://github.com/ultralytics/yolov5 "/yolov5"
 
 # copy the source code (recipe)
 COPY  ./packages "${REPO_PATH}/packages"
-COPY ./assets/agent "${REPO_PATH}/assets/agent"
-
-# copy the assets (meat)
-# COPY  ./assets/. "${REPO_PATH}/assets/"
-
-# copy the source code (meat)
-# COPY ./packages/. "${REPO_PATH}/packages/"
 
 # build packages
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh && \
