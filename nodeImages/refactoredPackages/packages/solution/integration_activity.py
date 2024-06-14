@@ -3,7 +3,7 @@ from typing import Tuple
 
 def DT_TOKEN() -> str:
     # TODO: change this to your duckietown token
-    dt_token = "dt1-3nT7FDbT7NLPrXykNJmqqhCXsvwQrRpDPyy5Bv9puj7PAHA-43dzqWFnWd8KBa1yev1g3UKnzVxZkkTbfaXgLDb2VSFqDbMSacWYeswcGvAXqe3ZAs"
+    dt_token = "dt1-3nT7FDbT7NLPrXykNJmqqh1v3fkywzQdti2VUSFrQa7HF4Q-43dzqWFnWd8KBa1yev1g3UKnzVxZkkTbfjLSzZjCy7j5Y6rJMe8GBP14axmwkrmn5f"
     return dt_token
 
 
@@ -25,10 +25,8 @@ def filter_by_classes(pred_class: int) -> bool:
 
         | Object    | ID    |
         | ---       | ---   |
-        | Duckie    | 0     |
-        | Cone      | 1     |
-        | Truck     | 2     |
-        | Bus       | 3     |
+        | People    | 0     |
+        | Shoe      | 1     |
 
 
     Args:
@@ -37,7 +35,7 @@ def filter_by_classes(pred_class: int) -> bool:
     # Right now, this returns True for every object's class
     # TODO: Change this to only return True for duckies!
     # In other words, returning False means that this prediction is ignored.
-    return True if pred_class == 0 else False
+    return True if pred_class == 1 else False
 
 
 def filter_by_scores(score: float) -> bool:
@@ -49,7 +47,7 @@ def filter_by_scores(score: float) -> bool:
     # TODO: Change this to filter the scores, or not at all
     # (returning True for all of them might be the right thing to do!)
     return True if score > 0.5 else False
-
+    
 
 def filter_by_bboxes(bbox: Tuple[int, int, int, int]) -> bool:
     """
