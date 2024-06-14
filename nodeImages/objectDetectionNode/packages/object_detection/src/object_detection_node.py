@@ -105,7 +105,7 @@ class ObjectDetectionNode(DTROS):
         self.bridge = CvBridge()
 
         self.log("Starting model loading!")
-        self.model_wrapper = Wrapper(False)
+        self.model_wrapper = Wrapper()
         self._debug = rospy.get_param("~debug", False)
         self.log("Finished model loading!")
         self.frame_id = 0
@@ -117,7 +117,7 @@ class ObjectDetectionNode(DTROS):
             return
 
         self.frame_id += 1
-        self.frame_id = self.frame_id % (1 + NUMBER_FRAMES_SKIPPED())
+        self.frame_id = self.frame_id % (1 + NUMBER_FRAMES_SKIPPED)
         if self.frame_id != 0:
             return
 

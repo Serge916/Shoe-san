@@ -63,7 +63,7 @@ RUN pip install numpy --upgrade
 RUN git clone -b v7.0 https://github.com/ultralytics/yolov5 "/yolov5"
 
 # copy the assets (recipe)
-# COPY  ./assets "${REPO_PATH}/assets"
+COPY  ./assets "${REPO_PATH}/assets"
 
 # copy the source code (recipe)
 COPY  ./packages "${REPO_PATH}/packages"
