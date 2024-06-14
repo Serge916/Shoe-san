@@ -138,6 +138,13 @@ class ObjectDetectionNode(DTROS):
         detection = self.det2bool(bboxes, classes, scores)
 
         if not detection:
+            # self.log("Nothing detected! Sending debug image either way")
+
+            if self._debug:
+                bgr = rgb[..., ::-1]
+                obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
+                self.pub_detections_image.publish(obj_det_img)
+            
             return
 
         names = {0: "People", 1: "Shoe"}
@@ -185,15 +192,16 @@ class ObjectDetectionNode(DTROS):
                 # draw label underneath the bounding box
                 rgb = cv2.putText(rgb, name, text_location, font, 1, color, thickness=2)
 
-                bgr = rgb[..., ::-1]
-                obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
-                self.pub_detections_image.publish(obj_det_img)
-
         if (len(shoe_bboxes.rects) != 0):
             self.pub_image_for_class.publish(shoe_bboxes)
         
         if (len(people_bboxes) != 0):
             self.bboxes_people.publish(people_bboxes)
+
+        if self._debug:
+            bgr = rgb[..., ::-1]
+            obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
+            self.pub_detections_image.publish(obj_det_img)
 
     def det2bool(self, bboxes, classes, scores):
         box_ids = np.array(list(map(filter_by_bboxes, bboxes))).nonzero()[0]
