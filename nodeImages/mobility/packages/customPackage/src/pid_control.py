@@ -135,6 +135,12 @@ class MobilityNode(DTROS):
 
         self.log("Initialized.")
 
+        # Shutdown flag
+        self.is_shutdown = False
+
+        # Register shutdown callback
+        rospy.on_shutdown(self.shutdown_hook)
+
     def resetParameters(self):
         # Add the node parameters to the parameters dictionary
         self.delta_phi_left = 0.0
@@ -189,6 +195,9 @@ class MobilityNode(DTROS):
         if self.left_tick_prev is None:
             self.left_tick_prev = encoder_msg.data
             return
+        
+        if self.is_shutdown:
+            return
 
         ticks = encoder_msg.data - self.left_tick_prev
         dphi = ticks / encoder_msg.resolution
@@ -214,6 +223,9 @@ class MobilityNode(DTROS):
             self.right_tick_prev = encoder_msg.data
             return
 
+        if self.is_shutdown:
+            return
+
         ticks = encoder_msg.data - self.right_tick_prev
         dphi = ticks / encoder_msg.resolution
         self.delta_phi_right += dphi
@@ -235,6 +247,9 @@ class MobilityNode(DTROS):
             ~/encoder_localization (:obj:`PoseStamped`): Duckiebot pose.
         """
         if not self.LEFT_RECEIVED or not self.RIGHT_RECEIVED:
+            return
+        
+        if self.is_shutdown:
             return
 
         left_wheel_distance = self.delta_phi_left * self.R
@@ -282,6 +297,10 @@ class MobilityNode(DTROS):
         self.Controller()
 
     def triggerController(self, coordinate_msg):
+
+        if self.is_shutdown:
+            return
+                
         self.x_target = coordinate_msg.x
         self.y_target = coordinate_msg.y
         self.theta_target = self.angle_clamp(coordinate_msg.theta)
@@ -295,7 +314,9 @@ class MobilityNode(DTROS):
         """
         Calculate theta and perform the control actions given by the PID
         """
-
+        if self.is_shutdown:
+            return  # Skip control loop if shutting down
+    
         delta_time = self.time_now - self.time_last_step
         # Avoid division by zero
         if delta_time <= 0:
@@ -347,7 +368,7 @@ class MobilityNode(DTROS):
         )
         # velocity = min(velocity, 0.05)
         # self.publishCmd(velocity, omega)
-        self.publishCmd(0, 0)
+        self.publishCmd(0.3, 2)
         # self.publishCmd(velocity, omega)
 
         self.prev_error_distance = error_distance
@@ -426,10 +447,24 @@ class MobilityNode(DTROS):
         while theta < -np.pi:
             theta += 2 * np.pi
         return theta
+    
+    def shutdown_hook(self):
+        # Set the shutdown flag
+        self.is_shutdown = True
+
+        # Stop the Duckiebot by sending zero velocities
+        rospy.loginfo("Shutting down... Sending stop command.")
+        self.publishCmd(0,0)
+
+        # Sleep to ensure the message is sent before shutting down
+        rospy.sleep(1)
 
 
 if __name__ == "__main__":
-    # Initialize the node
-    encoder_pose_node = MobilityNode(node_name="mobility_node")
-    # Keep it spinning
-    rospy.spin()
+    try:
+        # Initialize the node
+        encoder_pose_node = MobilityNode(node_name="mobility_node")
+        # Keep it spinning
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass

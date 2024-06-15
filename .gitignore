@@ -60,3 +60,6 @@ CATKIN_IGNORE
 
 # otherwise CI thinks index not clean
 *.resolved
+
+# Weights
+nodeImages/shoeClassificationNode/assets/nn_models/best_cnn_model_v2.pth
