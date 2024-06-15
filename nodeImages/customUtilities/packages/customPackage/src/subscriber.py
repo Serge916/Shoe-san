@@ -13,7 +13,7 @@ class MySubscriberNode(DTROS):
             node_name=node_name, node_type=NodeType.GENERIC
         )
         # construct subscriber
-        self.sub = rospy.Subscriber("alive", String, self.callback)
+        self.sub = rospy.Subscriber("/db3/", String, self.callback)
 
     def callback(self, data):
         rospy.loginfo("I heard '%s'", data.data)

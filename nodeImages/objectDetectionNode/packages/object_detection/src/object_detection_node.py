@@ -7,7 +7,7 @@ from typing import Tuple
 import os
 
 from duckietown.dtros import DTROS, NodeType, TopicType
-from duckietown_msgs.msg import Twist2DStamped, Rects, Rect, SceneSegments
+from duckietown_msgs.msg import Rects, Rect, SceneSegments
 from cv_bridge import CvBridge
 from sensor_msgs.msg import CompressedImage
 
