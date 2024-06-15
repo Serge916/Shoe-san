@@ -53,7 +53,7 @@ class MobilityNode(DTROS):
         # - odometry
         self.orientation_curr = 0.0
         self.orientation_prev = 0.0
-        self.ditance_curr = 0.0
+        self.distance_curr = 0.0
         self.distance_prev = 0.0
 
         self.x_curr = 0.0
@@ -118,7 +118,7 @@ class MobilityNode(DTROS):
         # Odometry publisher
         self.db_estimated_pose = rospy.Publisher(
             f"/{self.veh}/encoder_odometry",
-            Odometry,
+            Pose2DStamped,
             queue_size=1,
             dt_topic_type=TopicType.LOCALIZATION,
         )
@@ -193,12 +193,14 @@ class MobilityNode(DTROS):
         ticks = encoder_msg.data - self.left_tick_prev
         dphi = ticks / encoder_msg.resolution
         self.delta_phi_left += dphi
+        self.left_tick_prev += ticks
 
         # update time
         self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
 
         # compute the new pose
         self.LEFT_RECEIVED = True
+        print(f"Left encoder signaled {ticks}")
         self.poseEstimator()
 
     def cbRightEncoder(self, encoder_msg):
@@ -212,15 +214,17 @@ class MobilityNode(DTROS):
             self.right_tick_prev = encoder_msg.data
             return
 
-        ticks = encoder_msg.data - self.left_tick_prev
+        ticks = encoder_msg.data - self.right_tick_prev
         dphi = ticks / encoder_msg.resolution
-        self.delta_phi_left += dphi
+        self.delta_phi_right += dphi
+        self.right_tick_prev += ticks
 
         # update time
         self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
 
         # compute the new pose
         self.RIGHT_RECEIVED = True
+        print(f"Right encoder signaled {ticks}")
         self.poseEstimator()
 
     def poseEstimator(self):
@@ -230,6 +234,8 @@ class MobilityNode(DTROS):
         Publish:
             ~/encoder_localization (:obj:`PoseStamped`): Duckiebot pose.
         """
+        if not self.LEFT_RECEIVED or not self.RIGHT_RECEIVED:
+            return
 
         left_wheel_distance = self.delta_phi_left * self.R
         right_wheel_distance = self.delta_phi_right * self.R
@@ -239,10 +245,9 @@ class MobilityNode(DTROS):
         self.x_curr = self.x_prev + distance * np.cos(self.theta_prev)
         self.y_curr = self.y_prev + distance * np.sin(self.theta_prev)
         self.theta_curr = self.theta_prev + delta_theta
-
         self.theta_curr = self.angle_clamp(
             self.theta_curr
-        )  # angle always between 0,2pi
+        )  # angle always between -pi,pi
 
         # Current estimate becomes previous estimate at next iteration
         self.x_prev = self.x_curr
@@ -252,33 +257,34 @@ class MobilityNode(DTROS):
         # Calculate new odometry only when new data from encoders arrives
         self.delta_phi_left = self.delta_phi_right = 0
 
-        # Current estimate becomes previous estimate at next iteration
-        self.x_prev = self.x_curr
-        self.y_prev = self.y_curr
-        self.theta_prev = self.theta_curr
+        # # Creating message to plot pose in RVIZ
+        # odom = Odometry()
+        # odom.header.frame_id = "map"
+        # odom.header.stamp = rospy.Time.now()
 
-        # Creating message to plot pose in RVIZ
-        odom = Odometry()
-        odom.header.frame_id = "map"
-        odom.header.stamp = rospy.Time.now()
+        # odom.pose.pose.position.x = self.x_curr  # x position - estimate
+        # odom.pose.pose.position.y = self.y_curr  # y position - estimate
+        # odom.pose.pose.position.z = 0  # z position - no flying allowed in Duckietown
 
-        odom.pose.pose.position.x = self.x_curr  # x position - estimate
-        odom.pose.pose.position.y = self.y_curr  # y position - estimate
-        odom.pose.pose.position.z = 0  # z position - no flying allowed in Duckietown
+        # # these are quaternions - stuff for a different course!
+        # odom.pose.pose.orientation.x = 0
+        # odom.pose.pose.orientation.y = 0
+        # odom.pose.pose.orientation.z = np.sin(self.theta_curr / 2)
+        # odom.pose.pose.orientation.w = np.cos(self.theta_curr / 2)
 
-        # these are quaternions - stuff for a different course!
-        odom.pose.pose.orientation.x = 0
-        odom.pose.pose.orientation.y = 0
-        odom.pose.pose.orientation.z = np.sin(self.theta_curr / 2)
-        odom.pose.pose.orientation.w = np.cos(self.theta_curr / 2)
-
+        # self.db_estimated_pose.publish(odom)
+        odom = Pose2DStamped()
+        odom.x = self.x_curr
+        odom.y = self.y_curr
+        odom.theta = self.theta_curr
+        print(f"Pose estimated to be x:{odom.x}, y: {odom.y}, theta: {odom.theta}")
         self.db_estimated_pose.publish(odom)
         self.Controller()
 
     def triggerController(self, coordinate_msg):
         self.x_target = coordinate_msg.x
         self.y_target = coordinate_msg.y
-        self.theta_target = coordinate_msg.theta
+        self.theta_target = self.angle_clamp(coordinate_msg.theta)
         self.log(
             f"Received command!: Moving from ({self.x_curr},{self.y_curr}, {self.theta_curr}) to ({self.x_target},{self.y_target},{self.theta_target})"
         )
@@ -305,7 +311,7 @@ class MobilityNode(DTROS):
         error_distance_int = error_distance * delta_time + self.prev_error_distance_int
         error_distance_der = (error_distance - self.prev_error_distance) / delta_time
 
-        # If close to the coordinates
+        # If far to the coordinates
         if abs(error_distance) > 0.2:
             error_orientation = self.angle_clamp(
                 np.arctan2(error_y, error_x) - self.theta_curr
@@ -339,13 +345,15 @@ class MobilityNode(DTROS):
             + self.ki_linear * error_distance_int
             + self.kd_linear * error_distance_der
         )
-
-        self.publishCmd(velocity, omega)
+        # velocity = min(velocity, 0.05)
+        # self.publishCmd(velocity, omega)
+        self.publishCmd(0, 0)
+        # self.publishCmd(velocity, omega)
 
         self.prev_error_distance = error_distance
         self.prev_error_distance_int = error_distance_int
 
-        # If close to the coordinates
+        # If far to the coordinates
         if abs(error_distance) > 0.2:
             self.prev_error_orientation = error_orientation
             self.prev_error_orientation_int = error_orientation_int
@@ -368,7 +376,7 @@ class MobilityNode(DTROS):
 
         car_control_msg.v = v
         car_control_msg.omega = omega
-
+        self.log(f"Publishing to car, v:{v}, omega:{omega}")
         self.pub_car_cmd.publish(car_control_msg)
 
     def onShutdown(self):
@@ -413,12 +421,11 @@ class MobilityNode(DTROS):
 
     @staticmethod
     def angle_clamp(theta):
-        if theta > 2 * np.pi:
-            return theta - 2 * np.pi
-        elif theta < 0:
-            return theta + 2 * np.pi
-        else:
-            return theta
+        while theta > np.pi:
+            theta -= 2 * np.pi
+        while theta < -np.pi:
+            theta += 2 * np.pi
+        return theta
 
 
 if __name__ == "__main__":

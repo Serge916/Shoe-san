@@ -3,7 +3,8 @@
 import os
 import rospy
 from std_msgs.msg import Bool
-from duckietown.dtros import DTROS, NodeType
+from duckietown.dtros import DTROS, NodeType, TopicType
+from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped, Pose2DStamped
 
 
 class MyPublisherNode(DTROS):
@@ -18,12 +19,17 @@ class MyPublisherNode(DTROS):
         # static parameters
         self._vehicle_name = os.environ["VEHICLE_NAME"]
         # construct publisher
-        self._publisher = rospy.Publisher("~command_stop", Bool, queue_size=1)
-        self._subscriber = rospy.Subscriber(
-            f"{self._vehicle_name}/object_detection_node/detected_duckie",
-            Bool,
-            callback=self.cbDetected,
+        car_cmd_topic = f"/{self._vehicle_name}/joy_mapper_node/car_cmd"
+        self.pub_car_cmd = rospy.Publisher(
+            car_cmd_topic, Twist2DStamped, queue_size=1, dt_topic_type=TopicType.CONTROL
         )
+
+        car_control_msg = Twist2DStamped()
+
+        car_control_msg.v = 0
+        car_control_msg.omega = 0
+        self.log(f"Published STOP")
+        self.pub_car_cmd.publish(car_control_msg)
 
 
 if __name__ == "__main__":

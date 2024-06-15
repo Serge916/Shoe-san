@@ -6,6 +6,8 @@ from std_msgs.msg import String
 from duckietown.dtros import DTROS, NodeType
 from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped, Pose2DStamped
 
+import math
+
 
 class MyPublisherNode(DTROS):
 
@@ -42,8 +44,8 @@ class MyPublisherNode(DTROS):
     def get_user_input(self):
         x = float(input("Enter x coordinate: "))
         y = float(input("Enter y coordinate: "))
-        theta = float(input("Enter theta (orientation): "))
-        return x, y, theta
+        theta = float(input("Enter theta (deg): "))
+        return x, y, math.radians(theta)
 
 
 if __name__ == "__main__":

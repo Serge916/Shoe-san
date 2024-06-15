@@ -49,7 +49,7 @@ class OdometryNode(DTROS):
         # Defining subscribers:
 
         # Wheel encoder subscriber:
-        left_encoder_topic = f"/{self.veh}/encoder_localization"
+        left_encoder_topic = f"/{self.veh}/encoder_odometry"
         rospy.Subscriber(
             left_encoder_topic, Pose2DStamped, self.cbEncoderReading, queue_size=1
         )
@@ -144,6 +144,10 @@ class OdometryNode(DTROS):
         odom.pose.pose.orientation.y = 0
         odom.pose.pose.orientation.z = np.sin(self.estimate[2] / 2)
         odom.pose.pose.orientation.w = np.cos(self.estimate[2] / 2)
+
+        self.log(
+            f"Robot position is estimated to be: x:{self.estimate[0]}, y:{self.estimate[1]}, theta:{self.estimate[2]}"
+        )
 
         self.db_estimated_pose.publish(odom)
 
