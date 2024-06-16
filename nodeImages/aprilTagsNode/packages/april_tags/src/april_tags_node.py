@@ -5,7 +5,7 @@ import numpy as np
 import rospy
 import os
 from duckietown.dtros import DTROS, NodeType, TopicType
-from duckietown_msgs.msg import Pose2DStamped
+from duckietown_msgs.msg import Rect
 from cv_bridge import CvBridge
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool
@@ -30,7 +30,7 @@ class AprilTagsNode(DTROS):
         # Construct publishers
         april_tags_topic = f"/{self.veh}/april_tags_node/april_tags"
         self.april_tags_cmd = rospy.Publisher(
-            april_tags_topic, Pose2DStamped, queue_size=1, dt_topic_type=TopicType.PERCEPTION
+            april_tags_topic, Rect, queue_size=1, dt_topic_type=TopicType.PERCEPTION
         )
 
         # Construct subscribers
@@ -49,7 +49,12 @@ class AprilTagsNode(DTROS):
         self.first_image_received = False
         self.initialized = True
         self.log("Initialized!")
-
+        self.pose = Rect()
+        self.pose.x = -1    # Cardinal Direction (0 -> North, 1 -> East, 2 -> South, 3 -> West)
+        self.pose.y = 0     # Distance from AprilTag
+        self.pose.w = 0     # Angle of the April Tag with respect to the robot
+        self.pose.h = 0     # Angle of the robot with respect to the orientation of the April Tag
+        
     def image_cb(self, img):
         if not self.initialized:
             return
@@ -62,18 +67,20 @@ class AprilTagsNode(DTROS):
             return  
         rgb = bgr[..., ::-1]
         im_gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
-        
-        tags = self.detector.predict(im_gray)
-        
-        for tag in tags:
-            pose = Pose2DStamped()
-            pose.header = img.header
-            pose.x = tag.tag_id                     # Cardinal Direction (0 -> North, 1 -> East, 2 -> South, 3 -> West)
-            pose.y = tag.pose_t[2][0]               # Distance from AprilTag
-            pose.theta = np.arcsin(tag.pose_R[0,1])*180/np.pi # Angle from the AprilTag
-            self.log(pose)
 
-            self.april_tags_cmd.publish(pose)
+        detections = self.detector.predict(im_gray)
+        
+        for detection in detections:        
+            # tvec gives the position of the tag in the camera coordinate system
+            x, z = detection.pose_t[0], detection.pose_t[2]
+            
+            self.pose.x = detection.tag_id
+            self.pose.y = np.sqrt(x**2+z**2)[0]
+            self.pose.w = np.arctan2(x,z)[0]*180/np.pi
+            self.pose.h = np.arcsin(detection.pose_R[2][0])*180/np.pi
+            self.log(self.pose)
+
+            self.april_tags_cmd.publish(self.pose)
 
         return
 

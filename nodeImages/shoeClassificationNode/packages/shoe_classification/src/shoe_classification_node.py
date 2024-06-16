@@ -8,9 +8,10 @@ import os
 from duckietown.dtros import DTROS, NodeType, TopicType
 from duckietown_msgs.msg import Rect, Rects, SceneSegments
 from cv_bridge import CvBridge
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, PointCloud, ChannelFloat32
+from geometry_msgs.msg import Point32
 
-from nn_model.constants import IMAGE_SIZE, NUM_OF_CLASSES
+from nn_model.constants import *
 from nn_model.model import Wrapper, SimpleCNN
 
 
@@ -30,7 +31,7 @@ class ShoeClassificationNode(DTROS):
         # Construct publishers
         shoe_class_topic = f"/{self.veh}/shoe_class_node/shoe_class"
         self.shoe_class_cmd = rospy.Publisher(
-            shoe_class_topic, Rects, queue_size=1, dt_topic_type=TopicType.PERCEPTION
+            shoe_class_topic, PointCloud, queue_size=1, dt_topic_type=TopicType.PERCEPTION
         )
 
         # Debug image with rectangles
@@ -59,19 +60,42 @@ class ShoeClassificationNode(DTROS):
         self.initialized = True
         self.log("Initialized!")
 
+        self.classifiedShoes = PointCloud()
+        self.classifiedShoes.points = [Point32() for _ in range(2*NUM_OF_CLASSES)]
+        for idx in range(2*NUM_OF_CLASSES):
+            self.classifiedShoes.points[idx].z = -1
+
+
+        self.classifiedShoes.channels = [ChannelFloat32()]
+        self.classifiedShoes.channels[0].name = "rgb"
+        self.classifiedShoes.channels[0].values.append(WHITE)
+        self.classifiedShoes.channels[0].values.append(WHITE)
+        self.classifiedShoes.channels[0].values.append(GREEN) 
+        self.classifiedShoes.channels[0].values.append(GREEN)
+        self.classifiedShoes.channels[0].values.append(BLUE) 
+        self.classifiedShoes.channels[0].values.append(BLUE)
+        self.classifiedShoes.channels[0].values.append(GREY) 
+        self.classifiedShoes.channels[0].values.append(GREY)
+        self.classifiedShoes.channels[0].values.append(YELLOW) 
+        self.classifiedShoes.channels[0].values.append(YELLOW)
+
     def segment_cb(self, image_segment):
         if not self.initialized:
             return
 
+        for idx in range(2*NUM_OF_CLASSES):
+            self.classifiedShoes.points[idx].z = -1
+
         # Access Image and bounding boxes
         try:
-            bgr = self.bridge.compressed_imgmsg_to_cv2(image_segment.segimage)
+            rgb = self.bridge.compressed_imgmsg_to_cv2(image_segment.segimage)
         except ValueError as e:
             self.logerr("Could not decode image: %s" % e)
             return
 
-        rgb = bgr[..., ::-1]
-        rgb_xyb_rescaled = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE))
+        image_W = rgb.shape[1]
+        image_H = rgb.shape[0]
+        self.log(f"{image_W, image_H}")
         
         # Find how many bounding boxes were sent
         bboxes_msg = image_segment.rects
@@ -81,12 +105,10 @@ class ShoeClassificationNode(DTROS):
         for rect in bboxes_msg:
             bbox_list.append([rect.x, rect.y, rect.w, rect.h])
 
-        shoe_bbox_list = [ [0,0,0,0] for _ in range(2*NUM_OF_CLASSES)]
-
         for i in range(num_images):
             bbox = bbox_list[i]
             # Crop image based on the bounding boxes
-            cropped_image = self.cropImage(rgb_xyb_rescaled, bbox)
+            cropped_image = self.cropImage(rgb, bbox)
             cropped_image_rescaled = cv2.resize(cropped_image, (IMAGE_SIZE, IMAGE_SIZE))
 
             # Classify image
@@ -102,17 +124,40 @@ class ShoeClassificationNode(DTROS):
             # Varun   | 3     #
             # Vasilis | 4     #
             ###################
-            if shoe_bbox_list[2*shoe_class] != [0,0,0,0]:
-                shoe_bbox_list[2*shoe_class+1] = bbox
-            else:
-                shoe_bbox_list[2*shoe_class] = bbox
 
+            # Calculate Distance From Object and Orientation
+            object_projection = FOCAL_LENGTH * SHOE_HEIGHT[shoe_class] / bbox[3]
+
+            bound_x = bbox[0] + bbox[2]/2   # Center x-coordinate of lower bound
+            bound_y = bbox[1] + bbox[3]/2   # Center y-coordinate of lower bound
+
+            try:
+                theta = np.arctan((bound_x - image_W/2)/(image_H - bound_y)) * FOV/180
+            except ZeroDivisionError:
+                theta = FOV/180 * np.pi
+
+            distance = object_projection / np.cos(theta)
+
+            if self.classifiedShoes.points[2*shoe_class].z == -1:
+                self.classifiedShoes.points[2*shoe_class].x = distance
+                self.classifiedShoes.points[2*shoe_class].y = theta
+                self.classifiedShoes.points[2*shoe_class].z = 0
+            else: 
+                self.classifiedShoes.points[2*shoe_class+1].x = distance
+                self.classifiedShoes.points[2*shoe_class+1].y = theta
+                self.classifiedShoes.points[2*shoe_class+1].z = 0
+            
+            # For Debugging
             bgr = cropped_image_rescaled[..., ::-1]
             obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
             self.pub_detections_image.publish(obj_det_img)
-            
-        self.log(shoe_bbox_list)
-        self.pub_class_bboxes(shoe_bbox_list)
+        
+        for idx in range(0,2*NUM_OF_CLASSES,2):
+            if self.classifiedShoes.points[idx].z == 0:
+                self.log(idx)
+                self.log(f"Distance from {self.convertInt2Str(idx//2)}'s Shoe: {self.classifiedShoes.points[idx]}")
+
+        self.pub_class_bboxes(image_segment.segimage.header, self.classifiedShoes)
         return
 
     def convertInt2Str(self, class_idx: int):
@@ -132,19 +177,12 @@ class ShoeClassificationNode(DTROS):
         cropped_image = cv2.resize(image_arr, (IMAGE_SIZE, IMAGE_SIZE))
         return cropped_image
 
-    def pub_class_bboxes(self, classified_bboxes):
+    def pub_class_bboxes(self, head, classified_shoes):
 
-        bboxes_array_msg = Rects()
-        for class_bbox in classified_bboxes:
-            rect = Rect()
-            rect.x = class_bbox[0]
-            rect.y = class_bbox[1]
-            rect.w = class_bbox[2]
-            rect.h = class_bbox[3]
-            bboxes_array_msg.rects.append(rect)
+        classified_shoes.header = head
         
         # Publish the RectArray message
-        self.shoe_class_cmd.publish(bboxes_array_msg)
+        self.shoe_class_cmd.publish(classified_shoes)
         return
 
 
