@@ -168,7 +168,8 @@ class ObjectDetectionNode(DTROS):
         shoe_bboxes = SceneSegments()
         shoe_bboxes.segimage.header = image_msg.header
         # TODO! Check if I have to copy the data not only the pointer (probably but I forgot how python works)
-        shoe_bboxes.segimage.data = image_msg.data
+        _, im_buf_arr = cv2.imencode(".png", undistorted_rgb)
+        shoe_bboxes.segimage.data = im_buf_arr.tobytes()
         shoe_bboxes.rects = []
         people_bboxes = []
 
@@ -205,13 +206,14 @@ class ObjectDetectionNode(DTROS):
                 pt2 = tuple(pt2)
                 color = tuple(reversed(colors[clas]))
                 distance = 228.15 * 100 / rect.h
+                # theta = np.arctan()
                 # distance_y = 228.15 * 100 / rect.h
                 # angle =
                 name = f"{names[clas]}({distance} mm))"
                 # draw bounding box
                 undistorted_rgb = cv2.rectangle(undistorted_rgb, pt1, pt2, color, 2)
                 # label location
-                text_location = (pt1[0], min(pt2[1] + 30, IMAGE_SIZE))
+                text_location = (pt1[0], min(pt2[1] + 30, h))
                 # draw label underneath the bounding box
                 undistorted_rgb = cv2.putText(
                     undistorted_rgb, name, text_location, font, 1, color, thickness=2
