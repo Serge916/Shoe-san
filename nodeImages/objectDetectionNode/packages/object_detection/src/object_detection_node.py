@@ -12,12 +12,13 @@ from cv_bridge import CvBridge
 from sensor_msgs.msg import CompressedImage
 
 
-from nn_model.constants import IMAGE_SIZE
+from nn_model.constants import IMAGE_SIZE, OG_IMAGE_WIDTH, OG_IMAGE_HEIGHT, K, D
 from nn_model.model import Wrapper
 
 
 NUMBER_FRAMES_SKIPPED = 5
 NUM_OF_CLASSES = 2
+
 
 def filter_by_classes(pred_class: int) -> bool:
     """
@@ -43,7 +44,7 @@ def filter_by_scores(score: float) -> bool:
     """
 
     return True if score > 0.5 else False
-    
+
 
 def filter_by_bboxes(bbox: Tuple[int, int, int, int]) -> bool:
     """
@@ -101,6 +102,14 @@ class ObjectDetectionNode(DTROS):
             buff_size=10000000,
             queue_size=1,
         )
+        # Distortion variables
+        self.newK, self.regionOfInterest = cv2.getOptimalNewCameraMatrix(
+            K,
+            D,
+            (OG_IMAGE_WIDTH, OG_IMAGE_HEIGHT),
+            1,
+            (OG_IMAGE_WIDTH, OG_IMAGE_HEIGHT),
+        )
 
         self.bridge = CvBridge()
 
@@ -130,9 +139,15 @@ class ObjectDetectionNode(DTROS):
 
         rgb = bgr[..., ::-1]
 
-        rgb = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE))
-        bboxes, classes, scores = self.model_wrapper.predict(rgb)
+        # Undistort the image
+        undistorted_rgb = cv2.undistort(rgb, K, D, None, self.newK)
 
+        # Crop the image (if necessary)
+        x, y, w, h = self.regionOfInterest
+        undistorted_rgb = undistorted_rgb[y : y + h, x : x + w]
+        resized_rgb = cv2.resize(undistorted_rgb, (IMAGE_SIZE, IMAGE_SIZE))
+
+        bboxes, classes, scores = self.model_wrapper.predict(resized_rgb)
         classes = [int(classes[x]) % NUM_OF_CLASSES for x in range(len(classes))]
 
         detection = self.det2bool(bboxes, classes, scores)
@@ -141,10 +156,10 @@ class ObjectDetectionNode(DTROS):
             # self.log("Nothing detected! Sending debug image either way")
 
             if self._debug:
-                bgr = rgb[..., ::-1]
+                bgr = undistorted_rgb[..., ::-1]
                 obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
                 self.pub_detections_image.publish(obj_det_img)
-            
+
             return
 
         names = {0: "People", 1: "Shoe"}
@@ -157,14 +172,22 @@ class ObjectDetectionNode(DTROS):
         shoe_bboxes.rects = []
         people_bboxes = []
 
+        scale_x = w / IMAGE_SIZE
+        scale_y = h / IMAGE_SIZE
         for clas, box in zip(classes, bboxes):
             # TODO! Check the signs of these values
-            rect = Rect()
+            undistorted_box = [
+                int(box[0] * scale_x),
+                int(box[1] * scale_y),
+                int(box[2] * scale_x),
+                int(box[3] * scale_y),
+            ]
 
-            rect.x = int(box[0])
-            rect.y = int(box[1])
-            rect.w = int(box[2]) - rect.x
-            rect.h = int(box[3]) - rect.y
+            rect = Rect()
+            rect.x = int(undistorted_box[0])
+            rect.y = int(undistorted_box[1])
+            rect.w = int(undistorted_box[2]) - rect.x
+            rect.h = int(undistorted_box[3]) - rect.y
 
             if clas == 0:
                 # Then it has detected people, so we populate the info for the people_bboxes
@@ -174,32 +197,34 @@ class ObjectDetectionNode(DTROS):
                 shoe_bboxes.rects.append(rect)
 
             if self._debug:
-                colors = {
-                    0: (0, 255, 255),
-                    1: (0, 165, 255)
-                }
+                colors = {0: (0, 255, 255), 1: (0, 165, 255)}
 
                 pt1 = np.array([rect.x, rect.y])
-                pt2 = np.array([int(box[2]), int(box[3])])
+                pt2 = np.array([int(undistorted_box[2]), int(undistorted_box[3])])
                 pt1 = tuple(pt1)
                 pt2 = tuple(pt2)
                 color = tuple(reversed(colors[clas]))
-                name = names[clas]
+                distance = 228.15 * 100 / rect.h
+                # distance_y = 228.15 * 100 / rect.h
+                # angle =
+                name = f"{names[clas]}({distance} mm))"
                 # draw bounding box
-                rgb = cv2.rectangle(rgb, pt1, pt2, color, 2)
+                undistorted_rgb = cv2.rectangle(undistorted_rgb, pt1, pt2, color, 2)
                 # label location
                 text_location = (pt1[0], min(pt2[1] + 30, IMAGE_SIZE))
                 # draw label underneath the bounding box
-                rgb = cv2.putText(rgb, name, text_location, font, 1, color, thickness=2)
+                undistorted_rgb = cv2.putText(
+                    undistorted_rgb, name, text_location, font, 1, color, thickness=2
+                )
 
-        if (len(shoe_bboxes.rects) != 0):
+        if len(shoe_bboxes.rects) != 0:
             self.pub_image_for_class.publish(shoe_bboxes)
-        
-        if (len(people_bboxes) != 0):
+
+        if len(people_bboxes) != 0:
             self.bboxes_people.publish(people_bboxes)
 
         if self._debug:
-            bgr = rgb[..., ::-1]
+            bgr = undistorted_rgb[..., ::-1]
             obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
             self.pub_detections_image.publish(obj_det_img)
 
@@ -215,6 +240,7 @@ class ObjectDetectionNode(DTROS):
             return True
         else:
             return False
+
 
 if __name__ == "__main__":
     # Initialize the node

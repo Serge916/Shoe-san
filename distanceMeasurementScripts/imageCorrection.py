@@ -29,6 +29,9 @@ newK, regionOfInterest = cv2.getOptimalNewCameraMatrix(
     K, D, (image_width, image_height), 1, (image_width, image_height)
 )
 
+print(newK)
+print(regionOfInterest)
+
 # Undistort the image
 dst = cv2.undistort(img, K, D, None, newK)
 

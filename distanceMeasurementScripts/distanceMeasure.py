@@ -15,6 +15,7 @@ f = np.array(f)
 f_avg = np.mean(f[0:-2])
 
 # f_avg = 235.09285714285716
+print(f_avg)
 
 dist = []
 for i in range(len(h)):
