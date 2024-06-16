@@ -17,7 +17,7 @@ class Wrapper:
         cameraMatrix = np.array(
             parameters['camera_matrix']['data']).reshape((parameters['camera_matrix']['rows'],
                                                                        parameters['camera_matrix']['cols']))
-        
+
         self.camera_params = (cameraMatrix[0,0], cameraMatrix[1,1], cameraMatrix[0,2], cameraMatrix[1,2])
 
         self.at_detector = Detector(families='tag36h11',

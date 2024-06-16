@@ -68,9 +68,9 @@ class AprilTagsNode(DTROS):
         for tag in tags:
             pose = Pose2DStamped()
             pose.header = img.header
-            pose.x = tag.pose_t[2][0]
-            pose.y = TAG_SIZE
-            pose.theta = np.arcsin(tag.pose_R[0,1])
+            pose.x = tag.tag_id                     # Cardinal Direction (0 -> North, 1 -> East, 2 -> South, 3 -> West)
+            pose.y = tag.pose_t[2][0]               # Distance from AprilTag
+            pose.theta = np.arcsin(tag.pose_R[0,1])*180/np.pi # Angle from the AprilTag
             self.log(pose)
 
             self.april_tags_cmd.publish(pose)
