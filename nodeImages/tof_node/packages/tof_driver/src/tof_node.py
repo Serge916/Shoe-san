@@ -6,13 +6,13 @@ from typing import Optional
 
 import rospy
 import yaml
-from display_renderer import (
-    DisplayROI,
-    PAGE_TOF,
-    REGION_BODY,
-    MonoImageFragmentRenderer,
-)
-from display_renderer.text import monospace_screen
+# from display_renderer import (
+#     DisplayROI,
+#     PAGE_TOF,
+#     REGION_BODY,
+#     MonoImageFragmentRenderer,
+# )
+#from display_renderer.text import monospace_screen
 from dt_class_utils import DTReminder
 from dt_vl53l0x import VL53L0X
 from duckietown.dtros import DTROS, NodeType, TopicType
@@ -49,13 +49,13 @@ class ToFNode(DTROS):
             dt_topic_type=TopicType.DRIVER,
             dt_help="The distance to the closest object detected by the sensor",
         )
-        self._display_pub = rospy.Publisher(
-            "~fragments",
-            DisplayFragment,
-            queue_size=1,
-            dt_topic_type=TopicType.VISUALIZATION,
-            dt_help="Fragments to display on the display",
-        )
+        # self._display_pub = rospy.Publisher(
+        #     "~fragments",
+        #     DisplayFragment,
+        #     queue_size=1,
+        #     dt_topic_type=TopicType.VISUALIZATION,
+        #     dt_help="Fragments to display on the display",
+        # )
         # user hardware test
         self._hardware_test = HardwareTestToF(self._sensor_name, self._accuracy)
 
@@ -122,31 +122,31 @@ class ToFNode(DTROS):
             pass
 
 
-class ToFSensorFragmentRenderer(MonoImageFragmentRenderer):
-    def __init__(self, name: str, accuracy: ToFAccuracy):
-        super(ToFSensorFragmentRenderer, self).__init__(
-            f"__tof_{name}__",
-            page=PAGE_TOF,
-            region=REGION_BODY,
-            roi=DisplayROI(0, 0, REGION_BODY.width, REGION_BODY.height),
-        )
-        self._name = name
-        self._accuracy = accuracy
-        name = self._name.replace("_", " ").title()
-        self._title_h = 12
-        self._title = monospace_screen((self._title_h, self.roi.w), f"ToF / {name}:", scale="vfill")
+# class ToFSensorFragmentRenderer(MonoImageFragmentRenderer):
+#     def __init__(self, name: str, accuracy: ToFAccuracy):
+#         super(ToFSensorFragmentRenderer, self).__init__(
+#             f"__tof_{name}__",
+#             page=PAGE_TOF,
+#             region=REGION_BODY,
+#             roi=DisplayROI(0, 0, REGION_BODY.width, REGION_BODY.height),
+#         )
+#         self._name = name
+#         self._accuracy = accuracy
+#         name = self._name.replace("_", " ").title()
+#         self._title_h = 12
+#         self._title = monospace_screen((self._title_h, self.roi.w), f"ToF / {name}:", scale="vfill")
 
-    def update(self, measurement_mm: float):
-        pretty_measurement = (
-            f" {(measurement_mm / 10):.1f}cm "
-            if (measurement_mm / 1000) < self._accuracy.max_range
-            else "Out-Of-Range"
-        )
-        reading = monospace_screen(
-            (self.roi.h - self._title_h, self.roi.w), pretty_measurement, scale="hfill", align="center"
-        )
-        self.data[: self._title_h, :] = self._title
-        self.data[self._title_h:, :] = reading
+#     def update(self, measurement_mm: float):
+#         pretty_measurement = (
+#             f" {(measurement_mm / 10):.1f}cm "
+#             if (measurement_mm / 1000) < self._accuracy.max_range
+#             else "Out-Of-Range"
+#         )
+#         reading = monospace_screen(
+#             (self.roi.h - self._title_h, self.roi.w), pretty_measurement, scale="hfill", align="center"
+#         )
+#         self.data[: self._title_h, :] = self._title
+#         self.data[self._title_h:, :] = reading
 
 
 if __name__ == "__main__":

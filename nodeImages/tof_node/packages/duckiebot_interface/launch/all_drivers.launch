@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="veh" doc="Name of vehicle. ex: megaman"/>
+    <arg name="param_file_name" default="default" doc="Specify a param file. ex:default."/>
+    <arg name="robot_type"
+         doc="The type of the robot, e.g., duckiebot, watchtower, traffic_light, ..."/>
+    <arg name="robot_configuration"
+         doc="The configuration of the robot. For example DB19, DB20, ..."/>
+    <!-- Time-of-Flight sensor: -->
+    <!-- - DB21x: 1x ToF sensor at the Front Center      -->
+    <group if="$(eval arg('robot_configuration') in ['DB21M', 'DB21J', 'DBR4'])">
+        <remap from="front_center_tof_driver_node/fragments" to="display_driver_node/fragments"/>
+        <include file="$(find tof_driver)/launch/tof_node.launch">
+            <arg name="veh" value="$(arg veh)"/>
+            <arg name="name" value="front_center"/>
+        </include>
+    </group>
+</launch>

@@ -4,11 +4,11 @@ mode: "BETTER"
 display_fragment_frequency: 4
 connectors:
     # DB21M and DB21J (based on Jetson Nano A02)
-    -   bus: 13
-        address: 0x29
+    -   bus: 7
+        address: 0x6a
     # DB21J (based on Jetson Nano B01)
-    -   bus: 15
-        address: 0x29
+    -   bus: 8
+        address: 0x6a
     # fallback: connected directly to the HUT (any model)
     -   bus: 1
         address: 0x29
