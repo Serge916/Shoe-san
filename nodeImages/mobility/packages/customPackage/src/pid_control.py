@@ -88,7 +88,7 @@ class MobilityNode(DTROS):
         self.omega = 0.0
 
         # Init the parameters
-        self.resetParameters()
+        self.resetErrorParameters()
 
         # nominal R and L:
         self.log("Loading kinematics calibration...")
@@ -113,7 +113,9 @@ class MobilityNode(DTROS):
         rospy.Subscriber(
             target_coordinate_topic, Pose2DStamped, self.triggerController, queue_size=1
         )
-        print(target_coordinate_topic)
+        # Coordinate subscriber:
+        kill_switch_topic = f"/{self.veh}/kill_switch"
+        rospy.Subscriber(kill_switch_topic, Bool, self.cbKillSwitch, queue_size=1)
 
         # Odometry publisher
         self.db_estimated_pose = rospy.Publisher(
@@ -141,7 +143,7 @@ class MobilityNode(DTROS):
         # Register shutdown callback
         rospy.on_shutdown(self.shutdown_hook)
 
-    def resetParameters(self):
+    def resetErrorParameters(self):
         # Add the node parameters to the parameters dictionary
         self.delta_phi_left = 0.0
         self.left_tick_prev = None
@@ -149,19 +151,19 @@ class MobilityNode(DTROS):
         self.delta_phi_right = 0.0
         self.right_tick_prev = None
 
-        # - odometry
-        self.orientation_curr = 0.0
-        self.orientation_prev = 0.0
-        self.ditance_curr = 0.0
-        self.distance_prev = 0.0
+        # # - odometry
+        # self.orientation_curr = 0.0
+        # self.orientation_prev = 0.0
+        # self.ditance_curr = 0.0
+        # self.distance_prev = 0.0
 
-        self.x_curr = 0.0
-        self.y_curr = 0.0
-        self.theta_curr = 0.0
+        # self.x_curr = 0.0
+        # self.y_curr = 0.0
+        # self.theta_curr = 0.0
         # - commanded
-        self.x_target = 0.0
-        self.y_target = 0.0
-        self.theta_target = 0.0
+        self.x_target = None
+        self.y_target = None
+        self.theta_target = None
 
         # - PID controller
         self.kp_angular = 0
@@ -185,6 +187,11 @@ class MobilityNode(DTROS):
         self.velocity = 0.0
         self.omega = 0.0
 
+    def cbKillSwitch(self, msg):
+        if msg.data == True:
+            self.log("Received an abort movement command!")
+            self.publishCmd(0, 0)
+
     def cbLeftEncoder(self, encoder_msg):
         """
         Wheel encoder callback
@@ -195,7 +202,7 @@ class MobilityNode(DTROS):
         if self.left_tick_prev is None:
             self.left_tick_prev = encoder_msg.data
             return
-        
+
         if self.is_shutdown:
             return
 
@@ -248,7 +255,7 @@ class MobilityNode(DTROS):
         """
         if not self.LEFT_RECEIVED or not self.RIGHT_RECEIVED:
             return
-        
+
         if self.is_shutdown:
             return
 
@@ -300,7 +307,9 @@ class MobilityNode(DTROS):
 
         if self.is_shutdown:
             return
-                
+
+        self.resetErrorParameters()
+
         self.x_target = coordinate_msg.x
         self.y_target = coordinate_msg.y
         self.theta_target = self.angle_clamp(coordinate_msg.theta)
@@ -316,7 +325,10 @@ class MobilityNode(DTROS):
         """
         if self.is_shutdown:
             return  # Skip control loop if shutting down
-    
+        if self.x_target == None or self.y_target == None or self.theta_target == None:
+            self.publishCmd(0, 0)
+            return
+
         delta_time = self.time_now - self.time_last_step
         # Avoid division by zero
         if delta_time <= 0:
@@ -447,14 +459,14 @@ class MobilityNode(DTROS):
         while theta < -np.pi:
             theta += 2 * np.pi
         return theta
-    
+
     def shutdown_hook(self):
         # Set the shutdown flag
         self.is_shutdown = True
 
         # Stop the Duckiebot by sending zero velocities
         rospy.loginfo("Shutting down... Sending stop command.")
-        self.publishCmd(0,0)
+        self.publishCmd(0, 0)
 
         # Sleep to ensure the message is sent before shutting down
         rospy.sleep(1)
