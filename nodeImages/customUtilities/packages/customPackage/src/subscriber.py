@@ -14,7 +14,7 @@ class MySubscriberNode(DTROS):
             node_name=node_name, node_type=NodeType.GENERIC
         )
         # construct subscriber
-        self.sub = rospy.Subscriber("/db3/path_planner_node/path_planner/coordinates", Pose2DStamped, self.callback)
+        self.sub = rospy.Subscriber("/path_planner/coordinates", Pose2DStamped, self.callback)
 
     def callback(self, data):
         rospy.loginfo("I heard x: %d, y: %d. theta: %d, \n", data.x, data.y, data.theta)
