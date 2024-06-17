@@ -1,0 +1,3 @@
+# path to model is by default relative to the package
+model_file: "/include/april_tags/db3.yaml"
+

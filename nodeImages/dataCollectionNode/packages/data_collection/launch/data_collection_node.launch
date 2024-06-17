@@ -1,0 +1,11 @@
+<launch>
+    <arg name="veh"/>
+	<arg name="param_file_name" default="default"/>
+	<arg name="pkg_name" default="data_collection" doc="name of the package"/>
+	<arg name="node_name" default="data_collection_node" doc="name of the node"/>
+
+    <node ns="$(arg veh)"  pkg="$(arg pkg_name)" type="$(arg node_name).py" name="$(arg node_name)" output="screen" required="true">
+    </node>
+
+</launch>
+ 

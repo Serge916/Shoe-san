@@ -7,14 +7,8 @@ import cv2
 import numpy as np
 
 mapping = {
-    "house": "3deb34",
-    "bus": "ebd334",
-    "truck": "961fad",
-    "duckie": "cfa923",
-    "cone": "ffa600",
-    "floor": "000000",
-    "grass": "000000",
-    "barrier": "000099"
+    "People": "cfa923",
+    "Shoe": "ffa600"
 }
 mapping = {key: [int(h[i:i + 2], 16) for i in (0, 2, 4)] for key, h in mapping.items()}
 
@@ -40,7 +34,7 @@ def find_all_bboxes(mask):
 
 
 def find_all_boxes_and_classes(segmented_img):
-    classes = ["duckie", "cone", "truck", "bus"]
+    classes = ["People", "Shoe"]
     all_boxes = []
     all_classes = []
     for i, class_name in enumerate(classes):

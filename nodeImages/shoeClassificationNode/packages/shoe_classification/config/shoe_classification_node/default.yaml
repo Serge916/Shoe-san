@@ -1,0 +1,3 @@
+# path to model is by default relative to the package
+model_file: "/include/shoe_classification/weights/best_cnn_model.pth"
+
