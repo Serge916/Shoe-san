@@ -66,7 +66,12 @@ class AprilTagsNode(DTROS):
             self.logerr("Could not decode image: %s" % e)
             return  
         rgb = bgr[..., ::-1]
-        im_gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
+
+        # Undistort the image
+        undistorted_rgb = self.detector.rectify(rgb)
+
+
+        im_gray = cv2.cvtColor(undistorted_rgb, cv2.COLOR_BGR2GRAY)
 
         detections = self.detector.predict(im_gray)
         

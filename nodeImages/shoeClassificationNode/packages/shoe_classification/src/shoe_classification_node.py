@@ -95,7 +95,6 @@ class ShoeClassificationNode(DTROS):
 
         image_W = rgb.shape[1]
         image_H = rgb.shape[0]
-        self.log(f"{image_W, image_H}")
         
         # Find how many bounding boxes were sent
         bboxes_msg = image_segment.rects
@@ -113,7 +112,7 @@ class ShoeClassificationNode(DTROS):
 
             # Classify image
             shoe_class = self.model_wrapper.predict(cropped_image_rescaled)
-            self.log(f"Detected {self.convertInt2Str(shoe_class)}'s shoe.")
+            # self.log(f"Detected {self.convertInt2Str(shoe_class)}'s shoe.")
             # Depending on the classification of the image, set that list ID's values to the bounding boxes
 
             ###################
@@ -154,7 +153,6 @@ class ShoeClassificationNode(DTROS):
         
         for idx in range(0,2*NUM_OF_CLASSES,2):
             if self.classifiedShoes.points[idx].z == 0:
-                self.log(idx)
                 self.log(f"Distance from {self.convertInt2Str(idx//2)}'s Shoe: {self.classifiedShoes.points[idx]}")
 
         self.pub_class_bboxes(image_segment.segimage.header, self.classifiedShoes)
