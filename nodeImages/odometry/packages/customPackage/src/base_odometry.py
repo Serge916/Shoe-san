@@ -241,13 +241,18 @@ class OdometryNode(DTROS):
         odom.pose.pose.orientation.z = np.sin(self.estimate[2] / 2)
         odom.pose.pose.orientation.w = np.cos(self.estimate[2] / 2)
 
+        padded = np.zeros((6, 6))
+        padded[:, 0] = np.append(self.P[:, 0], np.zeros(3))
+        padded[:, 1] = np.append(self.P[:, 1], np.zeros(3))
+        padded[:, 4] = np.append(self.P[:, 3], np.zeros(3))
+
         padded = np.pad(
             self.P, pad_width=((0, 3), (0, 3)), mode="constant", constant_values=0
         )
         odom.pose.covariance = padded.flatten().tolist()
 
         self.log(
-            f"Robot position is estimated to be: {self.estimate}. Covariance is {odom.pose.covariance[0]} of type {type(odom.pose.covariance[0])}"
+            f"Robot position is estimated to be: {self.estimate}. Covariance is {odom.pose.covariance}"
             # f"Robot position is estimated to be: x:{self.estimate[0]}, y:{self.estimate[1]}, theta:{self.estimate[2]}"
         )
 
