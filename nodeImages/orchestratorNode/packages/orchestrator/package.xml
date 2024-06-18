@@ -1,0 +1,11 @@
+<package>
+  <name>orchestrator</name>
+  <version>0.0.1</version>
+  <description>
+  Node deciding what should be the general behavior of the duckiebot given the context of the shoes
+  </description>
+  <maintainer email="t.v.d.heijkant.bataller@student.tue.nl">Tomas van den Heijkant Bataller</maintainer>
+  <license>None</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+</package>

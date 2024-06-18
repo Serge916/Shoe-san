@@ -1,0 +1,2 @@
+# path to model is by default relative to the package
+debug: True
