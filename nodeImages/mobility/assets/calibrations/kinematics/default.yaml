@@ -1,14 +1,17 @@
-baseline: 0.108
+baseline: 0.1
 gain: 1.0
 k: 27.0
 limit: 1.0
-radius: 0.033
-trim: 0.0
-v_max: 0.05
-omega_max: 3.00
-kp_angular: 1
-ki_angular: .1
-kd_angular: 0.02
-kp_linear: 1
-ki_linear: .1
-kd_linear: 0.02
+radius: 0.0318
+trim: 0.005
+v_max: 1.0
+omega_max: 8.00
+
+
+kp_angular: 0.4
+ki_angular: 0.7
+kd_angular: 0.1
+
+kp_linear: 0.5
+ki_linear: 1
+kd_linear: 0

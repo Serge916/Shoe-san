@@ -11,6 +11,17 @@ from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped, Pose2DStamp
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Bool
 
+ON_DEST_THRESHOLD_OUT = 0.05
+ON_DEST_THRESHOLD_IN = 0.025
+ON_ANGLE_THRESHOLD_OUT = 0.2
+ON_ANGLE_THRESHOLD_IN = 0.1
+
+# State of the PID
+IDLE                  = 0
+FIXING_THETA          = 1
+CLOSING_GAP           = 2
+ADJUSTING_ORIENTATION = 3
+
 
 class MobilityNode(DTROS):
     """
@@ -80,6 +91,17 @@ class MobilityNode(DTROS):
         self.prev_error_distance_int = 0.0
         self.prev_error_distance = 0.0
 
+        # Variable keeping track of the state of the PID
+        self.state = IDLE
+
+        # Create a switcher for the different functions depending on the state
+        self.state_switch = {
+            IDLE                  : self.idle,
+            FIXING_THETA          : self.fixing_theta,
+            CLOSING_GAP           : self.closing_gap,
+            ADJUSTING_ORIENTATION : self.adjusting_oreintation
+        }
+
         self.time_now: float = 0.0
         self.time_last_step: float = 0.0
 
@@ -87,12 +109,17 @@ class MobilityNode(DTROS):
         self.velocity = 0.0
         self.omega = 0.0
 
+        # For encoders syncronization:
+        self.RIGHT_RECEIVED = False
+        self.LEFT_RECEIVED = False
+
         # Init the parameters
         self.resetErrorParameters()
 
         # nominal R and L:
         self.log("Loading kinematics calibration...")
         self.read_params_from_calibration_file()  # must have a custom robot calibration
+        self.log(f"After read!: {self.kp_angular}")
 
         # Defining subscribers:
 
@@ -120,7 +147,7 @@ class MobilityNode(DTROS):
         # Odometry publisher
         self.db_estimated_pose = rospy.Publisher(
             f"/{self.veh}/encoder_odometry",
-            Pose2DStamped,
+            Odometry,
             queue_size=1,
             dt_topic_type=TopicType.LOCALIZATION,
         )
@@ -130,10 +157,6 @@ class MobilityNode(DTROS):
         self.pub_car_cmd = rospy.Publisher(
             car_cmd_topic, Twist2DStamped, queue_size=1, dt_topic_type=TopicType.CONTROL
         )
-
-        # For encoders syncronization:
-        self.RIGHT_RECEIVED = False
-        self.LEFT_RECEIVED = False
 
         self.log("Initialized.")
 
@@ -151,27 +174,21 @@ class MobilityNode(DTROS):
         self.delta_phi_right = 0.0
         self.right_tick_prev = None
 
-        # # - odometry
-        # self.orientation_curr = 0.0
-        # self.orientation_prev = 0.0
-        # self.ditance_curr = 0.0
-        # self.distance_prev = 0.0
+        # - odometry
+        self.orientation_curr = 0.0
+        self.orientation_prev = 0.0
+        self.ditance_curr = 0.0
+        self.distance_prev = 0.0
 
-        # self.x_curr = 0.0
-        # self.y_curr = 0.0
-        # self.theta_curr = 0.0
-        # - commanded
+        self.x_curr = 0.0
+        self.y_curr = 0.0
+        self.theta_curr = 0.0
+
         self.x_target = None
         self.y_target = None
         self.theta_target = None
 
-        # - PID controller
-        self.kp_angular = 0
-        self.ki_angular = 0
-        self.kd_angular = 0
-        self.kp_linear = 0
-        self.ki_linear = 0
-        self.kd_linear = 0
+        self.state = IDLE
 
         self.prev_error_theta_int = 0.0
         self.prev_error_theta = 0.0
@@ -183,13 +200,15 @@ class MobilityNode(DTROS):
         self.time_now: float = 0.0
         self.time_last_step: float = 0.0
 
-        # fixed robot linear velocity - starts at zero so the activities start on command
+        # fixed robot linear velocity - starts at zero so the activities start on command TODO check!
         self.velocity = 0.0
         self.omega = 0.0
-
+    
+    # TODO make a smarter kill switch check cbPIDparam
     def cbKillSwitch(self, msg):
         if msg.data == True:
             self.log("Received an abort movement command!")
+            self.resetErrorParameters()
             self.publishCmd(0, 0)
 
     def cbLeftEncoder(self, encoder_msg):
@@ -207,7 +226,7 @@ class MobilityNode(DTROS):
             return
 
         ticks = encoder_msg.data - self.left_tick_prev
-        dphi = ticks / encoder_msg.resolution
+        dphi = (ticks * (2 * np.pi)) / encoder_msg.resolution
         self.delta_phi_left += dphi
         self.left_tick_prev += ticks
 
@@ -234,7 +253,7 @@ class MobilityNode(DTROS):
             return
 
         ticks = encoder_msg.data - self.right_tick_prev
-        dphi = ticks / encoder_msg.resolution
+        dphi = (ticks * (2 * np.pi)) / encoder_msg.resolution
         self.delta_phi_right += dphi
         self.right_tick_prev += ticks
 
@@ -258,48 +277,48 @@ class MobilityNode(DTROS):
 
         if self.is_shutdown:
             return
+        
+        # synch incoming messages from encoders
+        self.LEFT_RECEIVED = self.RIGHT_RECEIVED = False
 
+        ## Operations to calculate the new pose
         left_wheel_distance = self.delta_phi_left * self.R
         right_wheel_distance = self.delta_phi_right * self.R
+
         distance = (right_wheel_distance + left_wheel_distance) / 2
         delta_theta = (right_wheel_distance - left_wheel_distance) / self.baseline
-        # These are random values, replace with your own
+
         self.x_curr = self.x_prev + distance * np.cos(self.theta_prev)
         self.y_curr = self.y_prev + distance * np.sin(self.theta_prev)
+
         self.theta_curr = self.theta_prev + delta_theta
-        self.theta_curr = self.angle_clamp(
-            self.theta_curr
-        )  # angle always between -pi,pi
+        
+        self.theta_curr = self.angle_clamp(self.theta_curr)  # angle always between -pi,pi
+
+        # Calculate new odometry only when new data from encoders arrives
+        self.delta_phi_left = self.delta_phi_right = 0
 
         # Current estimate becomes previous estimate at next iteration
         self.x_prev = self.x_curr
         self.y_prev = self.y_curr
         self.theta_prev = self.theta_curr
 
-        # Calculate new odometry only when new data from encoders arrives
-        self.delta_phi_left = self.delta_phi_right = 0
-
         # # Creating message to plot pose in RVIZ
-        # odom = Odometry()
-        # odom.header.frame_id = "map"
-        # odom.header.stamp = rospy.Time.now()
+        odom = Odometry()
+        odom.header.frame_id = "map"
+        odom.header.stamp = rospy.Time.now()
 
-        # odom.pose.pose.position.x = self.x_curr  # x position - estimate
-        # odom.pose.pose.position.y = self.y_curr  # y position - estimate
-        # odom.pose.pose.position.z = 0  # z position - no flying allowed in Duckietown
+        odom.pose.pose.position.x = self.x_curr  # x position - estimate
+        odom.pose.pose.position.y = self.y_curr  # y position - estimate
+        odom.pose.pose.position.z = 0  # z position - no flying allowed in Duckietown
 
-        # # these are quaternions - stuff for a different course!
-        # odom.pose.pose.orientation.x = 0
-        # odom.pose.pose.orientation.y = 0
-        # odom.pose.pose.orientation.z = np.sin(self.theta_curr / 2)
-        # odom.pose.pose.orientation.w = np.cos(self.theta_curr / 2)
+        # these are quaternions - stuff for a different course!
+        odom.pose.pose.orientation.x = 0
+        odom.pose.pose.orientation.y = 0
+        odom.pose.pose.orientation.z = np.sin(self.theta_curr / 2)
+        odom.pose.pose.orientation.w = np.cos(self.theta_curr / 2)
 
-        # self.db_estimated_pose.publish(odom)
-        odom = Pose2DStamped()
-        odom.x = self.x_curr
-        odom.y = self.y_curr
-        odom.theta = self.theta_curr
-        print(f"Pose estimated to be x:{odom.x}, y: {odom.y}, theta: {odom.theta}")
+        print(f"Pose estimated to be x:{odom.pose.pose.position.x}, y: {odom.pose.pose.position.y}, theta: {self.theta_curr}")
         self.db_estimated_pose.publish(odom)
         self.Controller()
 
@@ -317,17 +336,38 @@ class MobilityNode(DTROS):
             f"Received command!: Moving from ({self.x_curr},{self.y_curr}, {self.theta_curr}) to ({self.x_target},{self.y_target},{self.theta_target})"
         )
 
-        self.Controller()
+        self.idle()
 
-    def Controller(self):
-        """
-        Calculate theta and perform the control actions given by the PID
-        """
-        if self.is_shutdown:
-            return  # Skip control loop if shutting down
-        if self.x_target == None or self.y_target == None or self.theta_target == None:
-            self.publishCmd(0, 0)
-            return
+    def idle(self):
+        # TODO: Check if the state has to be changed
+        # The previous error is set to the current error there is between the measurements so that there isn't a spike in the error
+        error_x = self.x_target - self.x_curr
+        error_y = self.y_target - self.y_curr
+
+        error_distance = np.sqrt(error_x**2 + error_y**2)
+        error_orientation = self.angle_clamp(
+            np.arctan2(error_y, error_x) - self.theta_curr
+        )
+        error_theta = self.theta_target - self.theta_curr
+
+        self.prev_error_distance = error_distance
+        self.prev_error_orientation = error_orientation
+        self.prev_error_theta = error_theta
+
+        if abs(error_distance) > ON_DEST_THRESHOLD_OUT and abs(error_orientation) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = ADJUSTING_ORIENTATION
+        elif abs(error_distance) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = CLOSING_GAP
+        elif abs(error_theta) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = FIXING_THETA
+        else:
+            self.state = IDLE
+            self.log("The duckiebot is close enough, stopping the robot to avoid jitter")
+
+
+    def fixing_theta(self):
+        #Adjust theta by changing the angular velocity. Check if the state has to be changed
+        self.log("On destination point but aligning with desired theta")
 
         delta_time = self.time_now - self.time_last_step
         # Avoid division by zero
@@ -336,64 +376,166 @@ class MobilityNode(DTROS):
 
         self.time_last_step = self.time_now
 
+        # Calculation of all errors
         error_x = self.x_target - self.x_curr
         error_y = self.y_target - self.y_curr
 
         error_distance = np.sqrt(error_x**2 + error_y**2)
+        error_orientation = self.angle_clamp(
+            np.arctan2(error_y, error_x) - self.theta_curr
+        )
 
+        # PID adjusting theta
+        error_theta = self.theta_target - self.theta_curr
+        error_theta_int = error_theta * delta_time + self.prev_error_theta_int
+        error_theta_der = (error_theta - self.prev_error_theta) / delta_time
+
+        # Clamping the integrar error just in case
+        error_theta_int = max(min(error_theta_int, 2), -2)
+
+        omega = (
+            self.kp_angular * error_theta
+            + self.ki_angular * error_theta_int
+            + self.kd_angular * error_theta_der
+        )
+
+        self.prev_error_theta = error_theta
+        self.prev_error_theta_int = error_theta_int
+
+        self.publishCmd(0, omega)
+
+        if abs(error_distance) > ON_DEST_THRESHOLD_OUT and abs(error_orientation) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = ADJUSTING_ORIENTATION
+            self.prev_error_orientation = error_orientation
+        elif abs(error_distance) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = CLOSING_GAP
+            self.prev_error_distance = error_distance
+        elif abs(error_theta) > ON_ANGLE_THRESHOLD_IN:
+            self.state = FIXING_THETA
+            self.prev_error_theta = error_theta
+        else:
+            self.state = IDLE
+
+    def closing_gap(self):
+        self.log("Aligned with destinition point, closing the gap!")
+
+        delta_time = self.time_now - self.time_last_step
+        # Avoid division by zero
+        if delta_time <= 0:
+            delta_time = 0.01
+
+        self.time_last_step = self.time_now
+
+        # Calculation of all errors
+        error_x = self.x_target - self.x_curr
+        error_y = self.y_target - self.y_curr
+
+        error_distance = np.sqrt(error_x**2 + error_y**2)
+        error_orientation = self.angle_clamp(
+            np.arctan2(error_y, error_x) - self.theta_curr
+        )
+        error_theta = self.theta_target - self.theta_curr
+
+        # PID adjusting distance
         error_distance_int = error_distance * delta_time + self.prev_error_distance_int
         error_distance_der = (error_distance - self.prev_error_distance) / delta_time
 
-        # If far to the coordinates
-        if abs(error_distance) > 0.2:
-            error_orientation = self.angle_clamp(
-                np.arctan2(error_y, error_x) - self.theta_curr
-            )
-            error_orientation_int = (
-                error_orientation * delta_time + self.prev_error_orientation_int
-            )
-            error_orientation_der = (
-                error_orientation - self.prev_error_orientation
-            ) / delta_time
-
-            omega = (
-                self.kp_angular * error_orientation
-                + self.ki_angular * error_orientation_int
-                + self.kd_angular * error_orientation_der
-            )
-        # If far from the coordinates
-        else:
-            error_theta = self.theta_target - self.theta_curr
-            error_theta_int = error_theta * delta_time + self.prev_error_theta_int
-            error_theta_der = (error_theta - self.prev_error_theta) / delta_time
-
-            omega = (
-                self.kp_angular * error_theta
-                + self.ki_angular * error_theta_int
-                + self.kd_angular * error_theta_der
-            )
+        # Clamping the integrar error just in case
+        error_distance_int = max(min(error_distance_int, 2), -2)
 
         velocity = (
             self.kp_linear * error_distance
             + self.ki_linear * error_distance_int
             + self.kd_linear * error_distance_der
         )
-        # velocity = min(velocity, 0.05)
-        # self.publishCmd(velocity, omega)
-        self.publishCmd(0.3, 2)
-        # self.publishCmd(velocity, omega)
 
         self.prev_error_distance = error_distance
         self.prev_error_distance_int = error_distance_int
 
-        # If far to the coordinates
-        if abs(error_distance) > 0.2:
+        self.publishCmd(velocity, 0)
+
+        if abs(error_distance) > ON_DEST_THRESHOLD_IN and abs(error_orientation) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = ADJUSTING_ORIENTATION
             self.prev_error_orientation = error_orientation
-            self.prev_error_orientation_int = error_orientation_int
-        # If far from the coordinates
-        else:
+        elif abs(error_distance) > ON_ANGLE_THRESHOLD_IN:
+            self.state = CLOSING_GAP
+            self.prev_error_distance = error_distance
+        elif abs(error_theta) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = FIXING_THETA
             self.prev_error_theta = error_theta
-            self.prev_error_theta_int = error_theta_int
+        else:
+            self.state = IDLE
+
+    def adjusting_oreintation(self):
+        self.log("Aligning the robot to the destination point")
+
+        delta_time = self.time_now - self.time_last_step
+        # Avoid division by zero
+        if delta_time <= 0:
+            delta_time = 0.01
+
+        self.time_last_step = self.time_now
+
+        # Calculation of all errors
+        error_x = self.x_target - self.x_curr
+        error_y = self.y_target - self.y_curr
+
+        error_distance = np.sqrt(error_x**2 + error_y**2)
+        error_orientation = self.angle_clamp(
+            np.arctan2(error_y, error_x) - self.theta_curr
+        )
+        error_theta = self.theta_target - self.theta_curr
+
+        error_orientation_int = (
+            error_orientation * delta_time + self.prev_error_orientation_int
+        )
+        error_orientation_der = (
+            error_orientation - self.prev_error_orientation
+        ) / delta_time
+
+        # Clamping the integrar error just in case
+        error_orientation_int = max(min(error_orientation_int, 2), -2)
+
+        omega = (
+            self.kp_angular * error_orientation
+            + self.ki_angular * error_orientation_int
+            + self.kd_angular * error_orientation_der
+        )
+
+        self.prev_error_orientation = error_orientation
+        self.prev_error_orientation_int = error_orientation_int
+
+        self.publishCmd(0, omega)
+
+        if abs(error_distance) > ON_DEST_THRESHOLD_OUT and abs(error_orientation) > ON_ANGLE_THRESHOLD_IN:
+            self.state = ADJUSTING_ORIENTATION
+            self.prev_error_orientation = error_orientation
+        elif abs(error_distance) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = CLOSING_GAP
+            self.prev_error_distance = error_distance
+        elif abs(error_theta) > ON_ANGLE_THRESHOLD_OUT:
+            self.state = FIXING_THETA
+            self.prev_error_theta = error_theta
+        else:
+            self.state = IDLE
+
+    def Controller(self):
+        """
+        Calculate theta and perform the control actions given by the PID
+        """
+        if self.is_shutdown:
+            return  # Skip control loop if shutting down
+        if self.x_target == None or self.y_target == None or self.theta_target == None:
+            self.log(f"Target is None")
+            self.publishCmd(0, 0)
+            return
+
+        # The controller has three different behaviours. First if the robot is far it will try to align itself with the destination by controlling angular velocity
+        # Once it is aligned then it will try to reduce the distance by controlling the linear velocity
+        # Lastly after arriving at the destination it alinges to the desired angular velocity
+        state_func = self.state_switch.get(self.state)
+        state_func()
+
 
     def publishCmd(self, v, omega):
         """
@@ -409,7 +551,7 @@ class MobilityNode(DTROS):
 
         car_control_msg.v = v
         car_control_msg.omega = omega
-        self.log(f"Publishing to car, v:{v}, omega:{omega}")
+        # self.log(f"Publishing to car, v:{v}, omega:{omega}")
         self.pub_car_cmd.publish(car_control_msg)
 
     def onShutdown(self):
