@@ -43,11 +43,15 @@ class MobilityNode(DTROS):
         self.veh = os.environ["VEHICLE_NAME"]
 
         # internal state
-        # - odometry
+        # - Past values
         self.orientation_curr = 0.0
         self.orientation_prev = 0.0
         self.distance_curr = 0.0
         self.distance_prev = 0.0
+        self.prev_error_orientation_int = 0.0
+        self.prev_error_orientation = 0.0
+        self.prev_error_distance_int = 0.0
+        self.prev_error_distance = 0.0
 
         self.x_curr = 0.0
         self.y_curr = 0.0
@@ -67,11 +71,6 @@ class MobilityNode(DTROS):
         self.kp_linear = 0
         self.ki_linear = 0
         self.kd_linear = 0
-
-        self.prev_error_orientation_int = 0.0
-        self.prev_error_orientation = 0.0
-        self.prev_error_distance_int = 0.0
-        self.prev_error_distance = 0.0
 
         self.time_now: float = 0.0
         self.time_last_step: float = 0.0
@@ -131,15 +130,6 @@ class MobilityNode(DTROS):
         self.delta_phi_right = 0.0
         self.right_tick_prev = None
 
-        # # - odometry
-        # self.orientation_curr = 0.0
-        # self.orientation_prev = 0.0
-        # self.ditance_curr = 0.0
-        # self.distance_prev = 0.0
-
-        # self.x_curr = 0.0
-        # self.y_curr = 0.0
-        # self.theta_curr = 0.0
         # - commanded
         self.x_target = None
         self.y_target = None

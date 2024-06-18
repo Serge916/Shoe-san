@@ -11,6 +11,8 @@ from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped, Pose2DStamp
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Bool
 
+from constants import *
+
 
 class OdometryNode(DTROS):
     """
@@ -28,6 +30,10 @@ class OdometryNode(DTROS):
             distance to the tag, tag id and angle of view
     """
 
+    distance_debug = 0
+    ticks_left_debug = 0
+    ticks_right_debug = 0
+
     def __init__(self, node_name):
         # Initialize the DTROS parent class
         super(OdometryNode, self).__init__(
@@ -44,6 +50,9 @@ class OdometryNode(DTROS):
 
         self.delta_phi_right = 0.0
         self.right_tick_prev = None
+
+        self.time_now: float = 0.0
+        self.time_last_step: float = 0.0
 
         # Init the parameters
         self.resetParameters()
@@ -65,11 +74,6 @@ class OdometryNode(DTROS):
             right_encoder_topic, WheelEncoderStamped, self.cbRightEncoder, queue_size=1
         )
 
-        # Wheel encoder subscriber:
-        left_encoder_topic = f"/{self.veh}/encoder_odometry"
-        rospy.Subscriber(
-            left_encoder_topic, Pose2DStamped, self.cbEncoderReading, queue_size=1
-        )
         # April tag subscriber:
         left_encoder_topic = f"/{self.veh}/april_tags/obtained_data"
         rospy.Subscriber(
@@ -102,10 +106,8 @@ class OdometryNode(DTROS):
             self.left_tick_prev = encoder_msg.data
             return
 
-        if self.is_shutdown:
-            return
-
         ticks = encoder_msg.data - self.left_tick_prev
+        OdometryNode.ticks_left_debug += ticks
         dphi = ticks / encoder_msg.resolution
         self.delta_phi_left += dphi
         self.left_tick_prev += ticks
@@ -129,10 +131,8 @@ class OdometryNode(DTROS):
             self.right_tick_prev = encoder_msg.data
             return
 
-        if self.is_shutdown:
-            return
-
         ticks = encoder_msg.data - self.right_tick_prev
+        OdometryNode.ticks_right_debug += ticks
         dphi = ticks / encoder_msg.resolution
         self.delta_phi_right += dphi
         self.right_tick_prev += ticks
@@ -142,65 +142,14 @@ class OdometryNode(DTROS):
 
         # compute the new pose
         self.RIGHT_RECEIVED = True
-        print(f"Right encoder signaled {ticks}")
+        print(f"Right encoder signaled {ticks}. Resolution is {encoder_msg.resolution}")
         self.poseEstimator()
-
-    def poseEstimator(self):
-        """
-        Publish the pose of the Duckiebot given by the kinematic model
-            using the encoders.
-        Publish:
-            ~/encoder_localization (:obj:`PoseStamped`): Duckiebot pose.
-        """
-        if not self.LEFT_RECEIVED or not self.RIGHT_RECEIVED:
-            return
-
-        if self.is_shutdown:
-            return
-
-        left_wheel_distance = self.delta_phi_left * self.R
-        right_wheel_distance = self.delta_phi_right * self.R
-        distance = (right_wheel_distance + left_wheel_distance) / 2
-        delta_theta = (right_wheel_distance - left_wheel_distance) / self.baseline
-        # These are random values, replace with your own
-        self.x_curr = self.x_prev + distance * np.cos(self.theta_prev)
-        self.y_curr = self.y_prev + distance * np.sin(self.theta_prev)
-        self.theta_curr = self.theta_prev + delta_theta
-        self.theta_curr = self.angle_clamp(
-            self.theta_curr
-        )  # angle always between -pi,pi
-
-        # Current estimate becomes previous estimate at next iteration
-        self.x_prev = self.x_curr
-        self.y_prev = self.y_curr
-        self.theta_prev = self.theta_curr
-
-        # Calculate new odometry only when new data from encoders arrives
-        self.delta_phi_left = self.delta_phi_right = 0
-
-        # Creating message to plot pose in RVIZ
-        odom = Odometry()
-        odom.header.frame_id = "map"
-        odom.header.stamp = rospy.Time.now()
-
-        odom.pose.pose.position.x = self.x_curr  # x position - estimate
-        odom.pose.pose.position.y = self.y_curr  # y position - estimate
-        odom.pose.pose.position.z = 0  # z position - no flying allowed in Duckietown
-
-        # these are quaternions - stuff for a different course!
-        odom.pose.pose.orientation.x = 0
-        odom.pose.pose.orientation.y = 0
-        odom.pose.pose.orientation.z = np.sin(self.theta_curr / 2)
-        odom.pose.pose.orientation.w = np.cos(self.theta_curr / 2)
-
-        self.db_estimated_pose.publish(odom)
-
-        self.Controller()
 
     def resetParameters(self):
         # Initialize the Kalman filter
         # Initial state [x, y, theta]
         self.estimate = np.array([0, 0, 0])
+        # self.estimate = np.array([[0], [0], [0]])
         # Initial covariance matrix
         self.P = np.eye(3)
         # Process noise covariance matrix
@@ -210,16 +159,43 @@ class OdometryNode(DTROS):
         # Measurement prediction
         self.H = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
-    def cbEncoderReading(self, msg):
+    def poseEstimator(self):
         """
         Publish the pose of the Duckiebot given by the aggregated odometry.
         Publish:
             ~/robot_localization (:obj:`PoseStamped`): Duckiebot pose.
         """
+        if not self.LEFT_RECEIVED or not self.RIGHT_RECEIVED:
+            return
+
+        left_wheel_distance = self.delta_phi_left * (2 * np.pi * R)
+        right_wheel_distance = self.delta_phi_right * (2 * np.pi * R)
+        delta_distance = (right_wheel_distance + left_wheel_distance) / 2
+        delta_theta = (right_wheel_distance - left_wheel_distance) / BASELINE
+
+        OdometryNode.distance_debug += delta_distance
+        # Calculate new odometry only when new data from encoders arrives
+        self.delta_phi_left = self.delta_phi_right = 0
+
+        self.log(
+            f"Travelled distance is {OdometryNode.distance_debug}. Ticks are: {OdometryNode.ticks_left_debug},{OdometryNode.ticks_right_debug}"
+        )
         # Prediction step:
         # Publisher reads estimated position. Difference to get increment
-        u = np.array([msg.x, msg.y, msg.theta]) - self.estimate
-        # State transition model
+        u = np.array(
+            [
+                delta_distance * np.cos(delta_theta),
+                delta_distance * np.sin(delta_theta),
+                delta_theta,
+            ]
+        )
+        # u = np.array(
+        #     [
+        #         [delta_distance * np.cos(delta_theta)],
+        #         [delta_distance * np.sin(delta_theta)],
+        #         [delta_theta],
+        #     ]
+        # )
         self.F = np.eye(3)
         # Control input model
         self.B = np.eye(3)
@@ -269,7 +245,8 @@ class OdometryNode(DTROS):
         odom.pose.pose.orientation.w = np.cos(self.estimate[2] / 2)
 
         self.log(
-            f"Robot position is estimated to be: x:{self.estimate[0]}, y:{self.estimate[1]}, theta:{self.estimate[2]}"
+            f"Robot position is estimated to be: {self.estimate}"
+            # f"Robot position is estimated to be: x:{self.estimate[0]}, y:{self.estimate[1]}, theta:{self.estimate[2]}"
         )
 
         self.db_estimated_pose.publish(odom)
