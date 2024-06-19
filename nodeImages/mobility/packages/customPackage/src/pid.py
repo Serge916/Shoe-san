@@ -5,7 +5,6 @@ from typing import Optional, Tuple
 
 import numpy as np
 import rospy
-import tf
 import yaml
 from duckietown.dtros import DTROS, NodeType, TopicType
 from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped, Pose2DStamped
@@ -123,19 +122,6 @@ class MobilityNode(DTROS):
         self.log(f"After read!: {self.kp_angular}")
 
         # Defining subscribers:
-
-        # Wheel encoder subscriber:
-        left_encoder_topic = f"/{self.veh}/left_wheel_encoder_node/tick"
-        rospy.Subscriber(
-            left_encoder_topic, WheelEncoderStamped, self.cbLeftEncoder, queue_size=1
-        )
-
-        # Wheel encoder subscriber:
-        right_encoder_topic = f"/{self.veh}/right_wheel_encoder_node/tick"
-        rospy.Subscriber(
-            right_encoder_topic, WheelEncoderStamped, self.cbRightEncoder, queue_size=1
-        )
-
         # Coordinate subscriber:
         target_coordinate_topic = f"/{self.veh}/path_planner/coordinates"
         rospy.Subscriber(
@@ -145,11 +131,13 @@ class MobilityNode(DTROS):
         kill_switch_topic = f"/{self.veh}/kill_switch"
         rospy.Subscriber(kill_switch_topic, Bool, self.cbKillSwitch, queue_size=1)
 
-        # Odometry publisher
-        self.db_estimated_pose = rospy.Publisher(
-            f"/{self.veh}/encoder_odometry",
+        # Odometry subscriber
+        self.db_estimated_pose = rospy.Subscriber(
+            f"/{self.veh}/robot_odometry/odometry",
             Odometry,
-            queue_size=1,
+            self.cbOdometry,
+            queue_size=10,
+            buffer_size=1000,
             dt_topic_type=TopicType.LOCALIZATION,
         )
 
@@ -198,77 +186,18 @@ class MobilityNode(DTROS):
         self.velocity = 0.0
         self.omega = 0.0
     
-    # TODO make a smarter kill switch check cbPIDparam
     def cbKillSwitch(self, msg):
         if msg.data == True:
             self.log("Received an abort movement command!")
             self.resetErrorParameters()
             self.publishCmd(0, 0)
 
-    def cbLeftEncoder(self, encoder_msg):
+
+    def cbOdometry(self, odom):
         """
-        Wheel encoder callback
-        Args:
-            encoder_msg (:obj:`WheelEncoderStamped`) encoder ROS message.
-        """
-        # initializing ticks to stored absolute value
-        if self.left_tick_prev is None:
-            self.left_tick_prev = encoder_msg.data
-            return
-
-        if self.is_shutdown:
-            return
-
-        ticks = encoder_msg.data - self.left_tick_prev
-        dphi = (ticks * (2 * np.pi)) / encoder_msg.resolution
-        self.delta_phi_left += dphi
-        self.left_tick_prev += ticks
-
-        # update time
-        self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
-
-        # compute the new pose
-        self.LEFT_RECEIVED = True
-        print(f"Left encoder signaled {ticks}")
-        self.poseEstimator()
-
-    def cbRightEncoder(self, encoder_msg):
-        """
-        Wheel encoder callback, the rotation of the wheel.
-        Args:
-            encoder_msg (:obj:`WheelEncoderStamped`) encoder ROS message.
-        """
-
-        if self.right_tick_prev is None:
-            self.right_tick_prev = encoder_msg.data
-            return
-
-        if self.is_shutdown:
-            return
-
-        ticks = encoder_msg.data - self.right_tick_prev
-        dphi = (ticks * (2 * np.pi)) / encoder_msg.resolution
-        self.delta_phi_right += dphi
-        self.right_tick_prev += ticks
-
-        # update time
-        self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
-
-        # compute the new pose
-        self.RIGHT_RECEIVED = True
-        print(f"Right encoder signaled {ticks}")
-        self.poseEstimator()
-
-    def poseEstimator(self):
-        """
-        Publish the pose of the Duckiebot given by the kinematic model
+        Callback for the pose of the Duckiebot given by the kinematic model
             using the encoders.
-        Publish:
-            ~/encoder_localization (:obj:`PoseStamped`): Duckiebot pose.
         """
-        if not self.LEFT_RECEIVED or not self.RIGHT_RECEIVED:
-            return
-
         if self.is_shutdown:
             return
         
@@ -297,30 +226,16 @@ class MobilityNode(DTROS):
         self.y_prev = self.y_curr
         self.theta_prev = self.theta_curr
 
-        # # Creating message to plot pose in RVIZ
-        odom = Odometry()
-        odom.header.frame_id = "map"
-        odom.header.stamp = rospy.Time.now()
+        # update time
+        self.time_now = max(self.time_now, odom.header.stamp.to_sec())
 
-        odom.pose.pose.position.x = self.x_curr  # x position - estimate
-        odom.pose.pose.position.y = self.y_curr  # y position - estimate
-        odom.pose.pose.position.z = 0  # z position - no flying allowed in Duckietown
+        self.x_curr = odom.pose.pose.position.x # x position - estimate
+        self.y_curr = odom.pose.pose.position.y # y position - estimate
 
         # these are quaternions - stuff for a different course!
-        odom.pose.pose.orientation.x = 0
-        odom.pose.pose.orientation.y = 0
-        odom.pose.pose.orientation.z = np.sin(self.theta_curr / 2)
-        odom.pose.pose.orientation.w = np.cos(self.theta_curr / 2)
+        self.theta_curr = 2 * np.arcsin(odom.pose.pose.orientation.z)
 
-        print(f"Pose estimated to be x:{odom.pose.pose.position.x}, y: {odom.pose.pose.position.y}, theta: {self.theta_curr}")
-        self.db_estimated_pose.publish(odom)
-
-        br = tf.TransformBroadcaster()
-        br.sendTransform((self.x_curr, self.y_curr, 0),
-            tf.transformations.quaternion_from_euler(0, 0, self.theta_curr),
-            rospy.Time.now(),
-            f"{self.veh}/base",
-            "map")
+        print(f"Pose estimated to be x:{self.x_curr}, y: {self.y_curr}, theta: {self.theta_curr}")
 
         self.Controller()
 
