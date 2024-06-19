@@ -34,27 +34,42 @@ class Wrapper:
                                     debug=0)
 
     def predict(self, img):
-        tags = self.at_detector.detect(img, True, self.camera_params, TAG_SIZE)
-        return tags
-    
-    def rectify(self, img):
+        detections = self.at_detector.detect(img)
         
-        # Distortion variables
-        self.newK, self.regionOfInterest = cv2.getOptimalNewCameraMatrix(
-            self.cameraMatrix,
-            self.distortionArray,
-            (img.shape[1], img.shape[0]),
-            1,
-            (img.shape[1], img.shape[0]),
-        )
-        # Undistort the image
-        undistorted_img = cv2.undistort(img, self.cameraMatrix, self.distortionArray, None, self.newK)
+        array_det = []
+        for detection in detections:
+            # Get the tag's corner points in the image
+            image_points = np.array([detection.corners], dtype=np.float32)
+            pt1 = (int(detection.corners[0][0]), int(detection.corners[0][1]))
+            pt2 = (int(detection.corners[2][0]), int(detection.corners[2][1]))
+            # Define the real-world coordinates of the tag's corners
+            object_points = np.array([
+                [-TAG_SIZE / 2, -TAG_SIZE / 2, 0],
+                [ TAG_SIZE / 2, -TAG_SIZE / 2, 0],
+                [ TAG_SIZE / 2,  TAG_SIZE / 2, 0],
+                [-TAG_SIZE / 2,  TAG_SIZE / 2, 0]
+            ], dtype=np.float32)
 
-        # Crop the image (if necessary)
-        x, y, w, h = self.regionOfInterest
+            # Solve the PnP problem to find the rotation and translation vectors
+            retval, rvec, tvec = cv2.solvePnP(object_points, image_points, self.cameraMatrix, self.distortionArray)
 
-        undistorted_rgb = undistorted_img[y : y + h, x : x + w]
-        # rospy.loginfo(undistorted_rgb.shape)
-        resized_undistorted_rgb = cv2.resize(undistorted_rgb, (img.shape[1], img.shape[0]))
-        # rospy.loginfo(resized_undistorted_rgb.shape)
-        return resized_undistorted_rgb
+            if retval:
+                # Translation vector (tvec) gives the position of the tag in the camera coordinate system
+                x, y, z = tvec[0][0], tvec[1][0], tvec[2][0]
+
+                R, _ = cv2.Rodrigues(rvec)
+                # Calculate the orientation of the tag in the camera frame
+                # Assuming the Z-axis is forward and the X-axis is to the right
+                angle_to_tag = np.arcsin(R[2, 0])*180/np.pi
+
+                # Calculate distance to the tag
+                distance = np.sqrt(x**2+z**2)
+
+                # Calculate angle to the tag (assuming the camera is facing along the Z-axis)
+                angle = np.arctan2(x, z)*180/np.pi
+
+                # Calculate the angle of the robot wrt the tag's orientation
+                # pose = np.arcsin(detection.pose_R[2][0])*180/np.pi
+
+                array_det.append([detection.tag_id, distance, angle, angle_to_tag, pt1, pt2])
+        return array_det
