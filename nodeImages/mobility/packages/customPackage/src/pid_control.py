@@ -13,7 +13,7 @@ from std_msgs.msg import String, Bool
 
 ON_DEST_THRESHOLD_OUT = 0.05
 ON_DEST_THRESHOLD_IN = 0.025
-ON_ANGLE_THRESHOLD_OUT = 0.2
+ON_ANGLE_THRESHOLD_OUT = 0.25
 ON_ANGLE_THRESHOLD_IN = 0.1
 
 # State of the PID
@@ -180,10 +180,6 @@ class MobilityNode(DTROS):
         self.ditance_curr = 0.0
         self.distance_prev = 0.0
 
-        self.x_curr = 0.0
-        self.y_curr = 0.0
-        self.theta_curr = 0.0
-
         self.x_target = None
         self.y_target = None
         self.theta_target = None
@@ -197,10 +193,7 @@ class MobilityNode(DTROS):
         self.prev_error_distance_int = 0.0
         self.prev_error_distance = 0.0
 
-        self.time_now: float = 0.0
-        self.time_last_step: float = 0.0
-
-        # fixed robot linear velocity - starts at zero so the activities start on command TODO check!
+        # fixed robot linear velocity - starts at zero so the activities start on command
         self.velocity = 0.0
         self.omega = 0.0
     
@@ -336,10 +329,12 @@ class MobilityNode(DTROS):
             f"Received command!: Moving from ({self.x_curr},{self.y_curr}, {self.theta_curr}) to ({self.x_target},{self.y_target},{self.theta_target})"
         )
 
+        self.time_last_step = self.time_now
+
         self.idle()
 
     def idle(self):
-        # TODO: Check if the state has to be changed
+        self.publishCmd(0, 0)
         # The previous error is set to the current error there is between the measurements so that there isn't a spike in the error
         error_x = self.x_target - self.x_curr
         error_y = self.y_target - self.y_curr
@@ -348,7 +343,7 @@ class MobilityNode(DTROS):
         error_orientation = self.angle_clamp(
             np.arctan2(error_y, error_x) - self.theta_curr
         )
-        error_theta = self.theta_target - self.theta_curr
+        error_theta = self.angle_clamp(self.theta_target - self.theta_curr)
 
         self.prev_error_distance = error_distance
         self.prev_error_orientation = error_orientation
@@ -356,13 +351,14 @@ class MobilityNode(DTROS):
 
         if abs(error_distance) > ON_DEST_THRESHOLD_OUT and abs(error_orientation) > ON_ANGLE_THRESHOLD_OUT:
             self.state = ADJUSTING_ORIENTATION
-        elif abs(error_distance) > ON_ANGLE_THRESHOLD_OUT:
+        elif abs(error_distance) > ON_DEST_THRESHOLD_OUT:
             self.state = CLOSING_GAP
         elif abs(error_theta) > ON_ANGLE_THRESHOLD_OUT:
             self.state = FIXING_THETA
         else:
             self.state = IDLE
             self.log("The duckiebot is close enough, stopping the robot to avoid jitter")
+
 
 
     def fixing_theta(self):
@@ -386,12 +382,13 @@ class MobilityNode(DTROS):
         )
 
         # PID adjusting theta
-        error_theta = self.theta_target - self.theta_curr
+        error_theta = self.angle_clamp(self.theta_target - self.theta_curr)
         error_theta_int = error_theta * delta_time + self.prev_error_theta_int
         error_theta_der = (error_theta - self.prev_error_theta) / delta_time
 
         # Clamping the integrar error just in case
-        error_theta_int = max(min(error_theta_int, 2), -2)
+        error_theta_int = max(min(error_theta_int, 5), -5)
+
 
         omega = (
             self.kp_angular * error_theta
@@ -399,6 +396,7 @@ class MobilityNode(DTROS):
             + self.kd_angular * error_theta_der
         )
 
+        self.log(f"Omega chosen: {omega}")
         self.prev_error_theta = error_theta
         self.prev_error_theta_int = error_theta_int
 
@@ -407,7 +405,7 @@ class MobilityNode(DTROS):
         if abs(error_distance) > ON_DEST_THRESHOLD_OUT and abs(error_orientation) > ON_ANGLE_THRESHOLD_OUT:
             self.state = ADJUSTING_ORIENTATION
             self.prev_error_orientation = error_orientation
-        elif abs(error_distance) > ON_ANGLE_THRESHOLD_OUT:
+        elif abs(error_distance) > ON_DEST_THRESHOLD_OUT:
             self.state = CLOSING_GAP
             self.prev_error_distance = error_distance
         elif abs(error_theta) > ON_ANGLE_THRESHOLD_IN:
@@ -415,6 +413,7 @@ class MobilityNode(DTROS):
             self.prev_error_theta = error_theta
         else:
             self.state = IDLE
+            self.publishCmd(0, 0)
 
     def closing_gap(self):
         self.log("Aligned with destinition point, closing the gap!")
@@ -434,7 +433,7 @@ class MobilityNode(DTROS):
         error_orientation = self.angle_clamp(
             np.arctan2(error_y, error_x) - self.theta_curr
         )
-        error_theta = self.theta_target - self.theta_curr
+        error_theta = self.angle_clamp(self.theta_target - self.theta_curr)
 
         # PID adjusting distance
         error_distance_int = error_distance * delta_time + self.prev_error_distance_int
@@ -449,6 +448,7 @@ class MobilityNode(DTROS):
             + self.kd_linear * error_distance_der
         )
 
+
         self.prev_error_distance = error_distance
         self.prev_error_distance_int = error_distance_int
 
@@ -457,7 +457,7 @@ class MobilityNode(DTROS):
         if abs(error_distance) > ON_DEST_THRESHOLD_IN and abs(error_orientation) > ON_ANGLE_THRESHOLD_OUT:
             self.state = ADJUSTING_ORIENTATION
             self.prev_error_orientation = error_orientation
-        elif abs(error_distance) > ON_ANGLE_THRESHOLD_IN:
+        elif abs(error_distance) > ON_DEST_THRESHOLD_IN:
             self.state = CLOSING_GAP
             self.prev_error_distance = error_distance
         elif abs(error_theta) > ON_ANGLE_THRESHOLD_OUT:
@@ -465,6 +465,7 @@ class MobilityNode(DTROS):
             self.prev_error_theta = error_theta
         else:
             self.state = IDLE
+            self.publishCmd(0, 0)
 
     def adjusting_oreintation(self):
         self.log("Aligning the robot to the destination point")
@@ -494,7 +495,7 @@ class MobilityNode(DTROS):
         ) / delta_time
 
         # Clamping the integrar error just in case
-        error_orientation_int = max(min(error_orientation_int, 2), -2)
+        error_orientation_int = max(min(error_orientation_int, 5), -5)
 
         omega = (
             self.kp_angular * error_orientation
@@ -507,10 +508,10 @@ class MobilityNode(DTROS):
 
         self.publishCmd(0, omega)
 
-        if abs(error_distance) > ON_DEST_THRESHOLD_OUT and abs(error_orientation) > ON_ANGLE_THRESHOLD_IN:
+        if abs(error_distance) > ON_DEST_THRESHOLD_IN and abs(error_orientation) > ON_ANGLE_THRESHOLD_IN:
             self.state = ADJUSTING_ORIENTATION
             self.prev_error_orientation = error_orientation
-        elif abs(error_distance) > ON_ANGLE_THRESHOLD_OUT:
+        elif abs(error_distance) > ON_DEST_THRESHOLD_IN:
             self.state = CLOSING_GAP
             self.prev_error_distance = error_distance
         elif abs(error_theta) > ON_ANGLE_THRESHOLD_OUT:
@@ -518,6 +519,7 @@ class MobilityNode(DTROS):
             self.prev_error_theta = error_theta
         else:
             self.state = IDLE
+            self.publishCmd(0, 0)
 
     def Controller(self):
         """
