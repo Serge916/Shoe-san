@@ -50,6 +50,17 @@ qtcreator-*
 # Catkin custom files
 CATKIN_IGNORE
 
+
+*/docs/build
+*pyc
+
+# documentation artifacts
+*/html/*
+!*/html/HTML_DOCS_WILL_BE_GENERATED_HERE
+
+# otherwise CI thinks index not clean
+*.resolved
+
 # Ignore weights classification
 nodeImages/shoeClassificationNode/assets/nn_models/best_cnn_model_v2.pth
 nodeImages/shoeClassificationNode/assets/nn_models/best_cnn_model_v3.pth
