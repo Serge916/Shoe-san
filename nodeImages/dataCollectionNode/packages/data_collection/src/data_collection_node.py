@@ -51,15 +51,16 @@ class DataCollectionNode(DTROS):
         except ValueError as e:
             self.logerr("Could not decode image: %s" % e)
             return
-
-        rgb_xyb_rescaled = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE))
         
         # Find how many bounding boxes were sent
         bboxes_msg = image_segment.rects
-        num_images = len(bboxes_msg)
+        num_images = int(len(bboxes_msg)/2)
         bbox_list = []
         # Decompress the bounding box coordinates to a list
-        for rect in bboxes_msg:
+        # for rect in bboxes_msg:
+        #     bbox_list.append([rect.x, rect.y, rect.w, rect.h])
+        for idx in range(0, len(bboxes_msg), 2):
+            rect = bboxes_msg[idx]
             bbox_list.append([rect.x, rect.y, rect.w, rect.h])
 
         for i in range(num_images):
@@ -67,18 +68,17 @@ class DataCollectionNode(DTROS):
             image_path = os.path.join(self.save_path, f"image_{self.image_count:04d}.jpg")
             bbox = bbox_list[i]
             # Crop image based on the bounding boxes
-            cropped_image = self.cropImage(rgb_xyb_rescaled, bbox)
-            cropped_image_rescaled = cv2.resize(cropped_image, (IMAGE_SIZE, IMAGE_SIZE))
+            cropped_image = self.cropImage(rgb, bbox)
             try:
-                cv2.imwrite(image_path, cropped_image_rescaled)
+                cv2.imwrite(image_path, cropped_image)
                 rospy.loginfo(f"Saved image {self.image_count} at {os.path.abspath(image_path)}")
             except Exception as e:
                 rospy.loginfo(f"Failed to save image: {e}")
 
-        return            
+        return
             
     def cropImage(self, image, bbox):
-
+        
         image_arr = image[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]] 
 
         cropped_image = cv2.resize(image_arr, (IMAGE_SIZE, IMAGE_SIZE))

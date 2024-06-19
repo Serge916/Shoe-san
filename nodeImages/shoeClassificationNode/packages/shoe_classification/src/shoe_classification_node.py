@@ -8,9 +8,10 @@ import os
 from duckietown.dtros import DTROS, NodeType, TopicType
 from duckietown_msgs.msg import Rect, Rects, SceneSegments
 from cv_bridge import CvBridge
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, PointCloud, ChannelFloat32
+from geometry_msgs.msg import Point32
 
-from nn_model.constants import IMAGE_SIZE, NUM_OF_CLASSES
+from nn_model.constants import *
 from nn_model.model import Wrapper, SimpleCNN
 
 
@@ -30,7 +31,13 @@ class ShoeClassificationNode(DTROS):
         # Construct publishers
         shoe_class_topic = f"/{self.veh}/shoe_class_node/shoe_class"
         self.shoe_class_cmd = rospy.Publisher(
-            shoe_class_topic, Rects, queue_size=1, dt_topic_type=TopicType.PERCEPTION
+            shoe_class_topic, PointCloud, queue_size=1, dt_topic_type=TopicType.PERCEPTION
+        )
+
+        # Construct publishers
+        debug_topic = f"/{self.veh}/shoe_class_node/debug_topic"
+        self.pub_debug_cmd = rospy.Publisher(
+            debug_topic, CompressedImage, queue_size=1, dt_topic_type=TopicType.VISUALIZATION
         )
 
         # Debug image with rectangles
@@ -59,9 +66,31 @@ class ShoeClassificationNode(DTROS):
         self.initialized = True
         self.log("Initialized!")
 
+        self.classifiedShoes = PointCloud()
+        self.classifiedShoes.points = [Point32() for _ in range(2*NUM_OF_CLASSES)]
+        for idx in range(2*NUM_OF_CLASSES):
+            self.classifiedShoes.points[idx].z = -1
+
+
+        self.classifiedShoes.channels = [ChannelFloat32()]
+        self.classifiedShoes.channels[0].name = "rgb"
+        self.classifiedShoes.channels[0].values.append(WHITE)
+        self.classifiedShoes.channels[0].values.append(WHITE)
+        self.classifiedShoes.channels[0].values.append(GREEN) 
+        self.classifiedShoes.channels[0].values.append(GREEN)
+        self.classifiedShoes.channels[0].values.append(BLUE) 
+        self.classifiedShoes.channels[0].values.append(BLUE)
+        self.classifiedShoes.channels[0].values.append(GREY) 
+        self.classifiedShoes.channels[0].values.append(GREY)
+        self.classifiedShoes.channels[0].values.append(YELLOW) 
+        self.classifiedShoes.channels[0].values.append(YELLOW)
+
     def segment_cb(self, image_segment):
         if not self.initialized:
             return
+
+        for idx in range(2*NUM_OF_CLASSES):
+            self.classifiedShoes.points[idx].z = -1
 
         # Access Image and bounding boxes
         try:
@@ -70,28 +99,34 @@ class ShoeClassificationNode(DTROS):
             self.logerr("Could not decode image: %s" % e)
             return
 
+        # self.log("Received Frame")
         rgb = bgr[..., ::-1]
-        rgb_xyb_rescaled = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE))
-        
         # Find how many bounding boxes were sent
-        bboxes_msg = image_segment.rects
-        num_images = len(bboxes_msg)
-        bbox_list = []
+        bboxes_distance_msg = image_segment.rects
+        num_images = int(len(bboxes_distance_msg)/2)
+        bbox_list = np.zeros([num_images, 4], dtype=np.int32)
+        distance_list = np.zeros([num_images, 4], dtype=np.float32)
         # Decompress the bounding box coordinates to a list
-        for rect in bboxes_msg:
-            bbox_list.append([rect.x, rect.y, rect.w, rect.h])
-
-        shoe_bbox_list = [ [0,0,0,0] for _ in range(2*NUM_OF_CLASSES)]
+        for idx in range(0, 2*num_images, 2):
+            # self.log(bboxes_distance_msg[idx])
+            bbox_list[int(idx/2)] = [bboxes_distance_msg[idx].x, bboxes_distance_msg[idx].y, bboxes_distance_msg[idx].w, bboxes_distance_msg[idx].h]
+            distance_list[int(idx/2)] = [bboxes_distance_msg[idx+1].x, bboxes_distance_msg[idx+1].y, bboxes_distance_msg[idx+1].w, bboxes_distance_msg[idx+1].h]
 
         for i in range(num_images):
             bbox = bbox_list[i]
+            distance = distance_list[i]
             # Crop image based on the bounding boxes
-            cropped_image = self.cropImage(rgb_xyb_rescaled, bbox)
-            cropped_image_rescaled = cv2.resize(cropped_image, (IMAGE_SIZE, IMAGE_SIZE))
+            cropped_image = self.cropImage(rgb, bbox)
+
+            bgr_cropped_image = cropped_image[..., ::-1]  
+            msg = self.bridge.cv2_to_compressed_imgmsg(bgr_cropped_image)
+            self.pub_debug_cmd.publish(msg)
+
+
 
             # Classify image
-            shoe_class = self.model_wrapper.predict(cropped_image_rescaled)
-            self.log(f"Detected {self.convertInt2Str(shoe_class)}'s shoe.")
+            shoe_class = self.model_wrapper.predict(cropped_image)
+            # self.log(f"Detected {self.convertInt2Str(shoe_class)}'s shoe.")
             # Depending on the classification of the image, set that list ID's values to the bounding boxes
 
             ###################
@@ -102,17 +137,31 @@ class ShoeClassificationNode(DTROS):
             # Varun   | 3     #
             # Vasilis | 4     #
             ###################
-            if shoe_bbox_list[2*shoe_class] != [0,0,0,0]:
-                shoe_bbox_list[2*shoe_class+1] = bbox
-            else:
-                shoe_bbox_list[2*shoe_class] = bbox
 
-            bgr = cropped_image_rescaled[..., ::-1]
+
+
+            dist = distance[0] + float(distance[1])/1000
+            angle = distance[2] + float(distance[3])/1000
+
+
+            if self.classifiedShoes.points[2*shoe_class].z == -1:
+                self.classifiedShoes.points[2*shoe_class].x = dist
+                self.classifiedShoes.points[2*shoe_class].y = angle
+                self.classifiedShoes.points[2*shoe_class].z = 0
+            else: 
+                self.classifiedShoes.points[2*shoe_class+1].x = dist
+                self.classifiedShoes.points[2*shoe_class+1].y = angle
+                self.classifiedShoes.points[2*shoe_class+1].z = 0
+            
+            # For Debugging
+            bgr = cropped_image[..., ::-1]
             obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
             self.pub_detections_image.publish(obj_det_img)
+        
             
-        self.log(shoe_bbox_list)
-        self.pub_class_bboxes(shoe_bbox_list)
+            self.log(f"Orientation of {self.convertInt2Str(shoe_class)}'s Shoe: ({dist}m, {angle}rad)")
+
+        self.pub_class_bboxes(image_segment.segimage.header, self.classifiedShoes)
         return
 
     def convertInt2Str(self, class_idx: int):
@@ -126,25 +175,18 @@ class ShoeClassificationNode(DTROS):
             
             
     def cropImage(self, image, bbox):
-
+        
         image_arr = image[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]] 
 
         cropped_image = cv2.resize(image_arr, (IMAGE_SIZE, IMAGE_SIZE))
         return cropped_image
 
-    def pub_class_bboxes(self, classified_bboxes):
+    def pub_class_bboxes(self, head, classified_shoes):
 
-        bboxes_array_msg = Rects()
-        for class_bbox in classified_bboxes:
-            rect = Rect()
-            rect.x = class_bbox[0]
-            rect.y = class_bbox[1]
-            rect.w = class_bbox[2]
-            rect.h = class_bbox[3]
-            bboxes_array_msg.rects.append(rect)
+        classified_shoes.header = head
         
         # Publish the RectArray message
-        self.shoe_class_cmd.publish(bboxes_array_msg)
+        self.shoe_class_cmd.publish(classified_shoes)
         return
 
 
