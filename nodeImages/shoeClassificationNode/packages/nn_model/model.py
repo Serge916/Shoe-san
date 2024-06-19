@@ -33,7 +33,7 @@ def run(input, exception_on_failure=False):
 
 class Wrapper:
     def __init__(self):
-        model_name = "best_cnn_model_v2"
+        model_name = "best_cnn_model_v3"
 
         models_path = os.path.join(ASSETS_DIR, "nn_models")
 

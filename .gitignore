@@ -52,3 +52,4 @@ CATKIN_IGNORE
 
 # Ignore weights classification
 nodeImages/shoeClassificationNode/assets/nn_models/best_cnn_model_v2.pth
+nodeImages/shoeClassificationNode/assets/nn_models/best_cnn_model_v3.pth

@@ -99,7 +99,7 @@ class ShoeClassificationNode(DTROS):
             self.logerr("Could not decode image: %s" % e)
             return
 
-        self.log("Received Frame")
+        # self.log("Received Frame")
         rgb = bgr[..., ::-1]
         # Find how many bounding boxes were sent
         bboxes_distance_msg = image_segment.rects
@@ -108,7 +108,7 @@ class ShoeClassificationNode(DTROS):
         distance_list = np.zeros([num_images, 4], dtype=np.float32)
         # Decompress the bounding box coordinates to a list
         for idx in range(0, 2*num_images, 2):
-            self.log(bboxes_distance_msg[idx])
+            # self.log(bboxes_distance_msg[idx])
             bbox_list[int(idx/2)] = [bboxes_distance_msg[idx].x, bboxes_distance_msg[idx].y, bboxes_distance_msg[idx].w, bboxes_distance_msg[idx].h]
             distance_list[int(idx/2)] = [bboxes_distance_msg[idx+1].x, bboxes_distance_msg[idx+1].y, bboxes_distance_msg[idx+1].w, bboxes_distance_msg[idx+1].h]
 
