@@ -47,7 +47,7 @@ class OrchestratorNode(DTROS):
         ## Construct subscribers
         # TODO: Shoe positions
         self.shoepos_msg = rospy.Subscriber(
-            f"/{self.veh}/shoe_positions/shoes",
+            f"/{self.veh}/robot_odometry/shoe_positions",
             PointCloud,
             self.shoepos_cb,
             #buff_size=10000,
@@ -153,7 +153,7 @@ class OrchestratorNode(DTROS):
             return
 
         # Check if we are executing idle behavior so that the mission is not sent again
-        if self.current_behavior == self.send_behavior or self.current_behavior in [NOTHING_IN_SIGHT, STOP_ROBOT]:
+        if self.current_behavior == self.send_behavior:
             return
 
         # The way this is setup is that the behavior is also the class id of the shoe. Change this function if it is no longer the same!

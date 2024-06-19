@@ -1,0 +1,11 @@
+<package>
+  <name>path_planner</name>
+  <version>0.0.1</version>
+  <description>
+  Path planning package for various motions
+  </description>
+  <maintainer email="varunkumar.siva@gmail.com">Varun Kumar</maintainer>
+  <license>None</license>
+	
+  <buildtool_depend>catkin</buildtool_depend>
+</package>
