@@ -3,6 +3,7 @@ import os
 import time
 from typing import Optional, Tuple
 
+import tf
 import numpy as np
 import rospy
 import yaml
@@ -10,7 +11,7 @@ from duckietown.dtros import DTROS, NodeType, TopicType
 from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped, Pose2DStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Bool
-from geometry_msgs.msg import Point32
+from geometry_msgs.msg import Point32, Quaternion
 from sensor_msgs.msg import Range, PointCloud, ChannelFloat32
 
 from constants import *
@@ -96,9 +97,9 @@ class OdometryNode(DTROS):
         )
 
         # April tag subscriber:
-        left_encoder_topic = f"/{self.veh}/april_tags/obtained_data"
+        left_encoder_topic = f"/{self.veh}/april_tags_node/april_tags"
         rospy.Subscriber(
-            left_encoder_topic, Pose2DStamped, self.cbAprilTagReading, queue_size=1
+            left_encoder_topic, Quaternion, self.cbAprilTagReading, queue_size=1
         )
         # Time-of-flight subscriber:
         left_encoder_topic = f"/{self.veh}/front_center_tof_driver_node/range"
@@ -144,9 +145,6 @@ class OdometryNode(DTROS):
         self.delta_phi_left += dphi
         self.left_tick_prev += ticks
 
-        # update time
-        # self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
-
         # compute the new pose
         self.LEFT_RECEIVED = True
         self.poseEstimator()
@@ -166,9 +164,6 @@ class OdometryNode(DTROS):
         dphi = ticks / encoder_msg.resolution
         self.delta_phi_right += dphi
         self.right_tick_prev += ticks
-
-        # update time
-        # self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
 
         # compute the new pose
         self.RIGHT_RECEIVED = True
@@ -212,16 +207,6 @@ class OdometryNode(DTROS):
         # Calculate new odometry only when new data from encoders arrives
         self.delta_phi_left = self.delta_phi_right = 0
 
-        # Prediction step:
-        # Publisher reads estimated position. Difference to get increment
-        # u = np.array(
-        #     [
-        #         delta_distance * np.cos(delta_theta),
-        #         delta_distance * np.sin(delta_theta),
-        #         delta_theta,
-        #     ]
-        # )
-
         # Publisher reads estimated position. Difference to get increment IDEA
         u = np.array(
             [
@@ -246,11 +231,16 @@ class OdometryNode(DTROS):
         Gives a reliable estimation of the robot position and orientation.
         Args:
             phi: Angle measured from the direction of looking straight into the tag and the orientation of the boot
-            alpha: Angle measured from the perspective of the tag. Direction to the robot
+            psi: Angle measured from the perspective of the tag. Direction to the robot
             distance: Distance from robot to tag
             id: Tag unique identifier
         """
-        tag_orientation = TAG_ORIENTATIONS.get(id)
+        id = msg.x
+        distance = msg.y
+        phi = msg.z
+        psi = msg.w
+
+        tag_orientation = TAG_ORIENTATIONS.get(msg.id)
         theta = msg.alpha - np.pi + msg.phi + tag_orientation
         x = msg.distance * np.cos(theta)
         y = msg.distance * np.sin(theta)
@@ -284,6 +274,15 @@ class OdometryNode(DTROS):
         odom.pose.pose.orientation.y = 0
         odom.pose.pose.orientation.z = np.sin(self.estimate[2] / 2)
         odom.pose.pose.orientation.w = np.cos(self.estimate[2] / 2)
+
+        br = tf.TransformBroadcaster()
+        br.sendTransform(
+            (self.estimate[0], self.estimate[1], 0),
+            tf.transformations.quaternion_from_euler(0, 0, self.estimate[2]),
+            rospy.Time.now(),
+            f"{self.veh}/base",
+            "map",
+        )
 
         padded = np.zeros((6, 6))
         padded[:, 0] = np.append(self.P[:, 0], np.zeros(3))
@@ -405,14 +404,6 @@ class OdometryNode(DTROS):
         while theta < -np.pi:
             theta += 2 * np.pi
         return theta
-
-    # def angle_clamp(theta):
-    #     if theta > 2 * np.pi:
-    #         return theta - 2 * np.pi
-    #     elif theta < 0:
-    #         return theta + 2 * np.pi
-    #     else:
-    #         return theta
 
     def run(self):
         # publish message every 0.5 second (2 Hz)
