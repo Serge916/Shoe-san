@@ -27,12 +27,30 @@ class MyPublisherNode(DTROS):
 
         self.shoe_poses = PointCloud()
         self.shoe_poses.header.stamp = rospy.Time.now()
-        self.shoe_poses.header.frame_id = "db3/base"
+        self.shoe_poses.header.frame_id = "map"
+        # for i in range(10):
+        #     new_point = Point32()
+        #     new_point.x = 0
+        #     new_point.y = 0
+        #     new_point.z = -1
+        #     if i == 8:
+        #         new_point.x = 0.5
+        #         new_point.y = -0.5
+        #         new_point.z = 0
+
+        #     if i == 9:
+        #         new_point.x = -0.5
+        #         new_point.y = 0.5
+        #         new_point.z = 0
+            
+        #     self.shoe_poses.points.append(new_point)
+
         for i in range(10):
             new_point = Point32()
-            new_point.x = 0
-            new_point.y = 2*i
+            new_point.x = i
+            new_point.y = i
             new_point.z = 0
+            
             self.shoe_poses.points.append(new_point)
 
         self.shoe_poses.channels = [ChannelFloat32()]

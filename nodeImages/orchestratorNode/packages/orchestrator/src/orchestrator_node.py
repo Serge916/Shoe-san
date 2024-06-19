@@ -129,6 +129,8 @@ class OrchestratorNode(DTROS):
         if end.data == self.send_behavior:
             # TODO: Add some delay here in case it was one of the missions that are complex so that they do not start immediatly after?
             self.idle = True
+            if self.trigger_behavior in [TOM_CIRCLE, VASILIS_EIGHT, SHASHANK_ORBIT]:
+                self.trigger_behavior = STOP_ROBOT
             
             self.log(f"** Received an end event from the path palnner **\n")
 
