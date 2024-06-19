@@ -225,8 +225,8 @@ class OdometryNode(DTROS):
         # Publisher reads estimated position. Difference to get increment IDEA
         u = np.array(
             [
-                delta_distance * np.cos(self.estimate[2]),
-                delta_distance * np.sin(self.estimate[2]),
+                delta_distance * np.cos(self.estimate[2] + delta_theta),
+                delta_distance * np.sin(self.estimate[2] + delta_theta),
                 delta_theta,
             ]
         )
