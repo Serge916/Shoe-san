@@ -10,6 +10,8 @@ from duckietown.dtros import DTROS, NodeType, TopicType
 from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped, Pose2DStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Bool
+from geometry_msgs.msg import Point32
+from sensor_msgs.msg import Range, PointCloud, ChannelFloat32
 
 from constants import *
 
@@ -22,7 +24,7 @@ class OdometryNode(DTROS):
     Configuration:
 
     Publisher:
-        ~robot_localization (:obj:`PoseStamped`): The computed position
+        ~robot_localization (:local_shoe_posestamped`): The computed position
     Subscribers:
         ~/encoder_localization (:obj:`WheelEncoderStamped`):
             encoder based odometry
@@ -47,11 +49,31 @@ class OdometryNode(DTROS):
         self.delta_phi_right = 0.0
         self.right_tick_prev = None
 
-        self.time_now: float = 0.0
-        self.time_last_step: float = 0.0
-
         self.LEFT_RECEIVED = False
         self.RIGHT_RECEIVED = False
+        # Initialize local_shoe_poses
+        self.local_shoe_poses = PointCloud()
+        self.local_shoe_poses.header.stamp = rospy.Time.now()
+        self.local_shoe_poses.header.frame_id = "map"
+        for i in range(10):
+            newpoint = Point32()
+            newpoint.x = 0
+            newpoint.y = 0
+            newpoint.z = -1
+            self.local_shoe_poses.points.append(newpoint)
+        self.shoe_counter = [0 for i in range(10)]
+        self.local_shoe_poses.channels = [ChannelFloat32()]
+        self.local_shoe_poses.channels[0].name = "rgb"
+        self.local_shoe_poses.channels[0].values.append(WHITE)
+        self.local_shoe_poses.channels[0].values.append(WHITE)
+        self.local_shoe_poses.channels[0].values.append(GREEN)
+        self.local_shoe_poses.channels[0].values.append(GREEN)
+        self.local_shoe_poses.channels[0].values.append(BLUE)
+        self.local_shoe_poses.channels[0].values.append(BLUE)
+        self.local_shoe_poses.channels[0].values.append(GREY)
+        self.local_shoe_poses.channels[0].values.append(GREY)
+        self.local_shoe_poses.channels[0].values.append(YELLOW)
+        self.local_shoe_poses.channels[0].values.append(YELLOW)
 
         # Init the parameters
         self.resetParameters()
@@ -79,16 +101,28 @@ class OdometryNode(DTROS):
             left_encoder_topic, Pose2DStamped, self.cbAprilTagReading, queue_size=1
         )
         # Time-of-flight subscriber:
-        left_encoder_topic = f"/{self.veh}/ToF/reading"
+        left_encoder_topic = f"/{self.veh}/front_center_tof_driver_node/range"
+        rospy.Subscriber(left_encoder_topic, Range, self.cbToFReading, queue_size=1)
+
+        # Shoe classifier subscriber:
+        left_encoder_topic = f"/{self.veh}/shoe_class_node/shoe_class"
         rospy.Subscriber(
-            left_encoder_topic, Pose2DStamped, self.cbToFReading, queue_size=1
+            left_encoder_topic, PointCloud, self.cbShoePosition, queue_size=1
         )
 
         # Odometry publisher
         self.db_estimated_pose = rospy.Publisher(
-            f"/{self.veh}/robot_odometry",
+            f"/{self.veh}/robot_odometry/odometry",
             Odometry,
             queue_size=1,
+            dt_topic_type=TopicType.LOCALIZATION,
+        )
+
+        # Shoe posiition publisher
+        self.db_shoe_pose = rospy.Publisher(
+            f"/{self.veh}/robot_odometry/shoe_positions",
+            PointCloud,
+            queue_size=10,
             dt_topic_type=TopicType.LOCALIZATION,
         )
 
@@ -111,7 +145,7 @@ class OdometryNode(DTROS):
         self.left_tick_prev += ticks
 
         # update time
-        self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
+        # self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
 
         # compute the new pose
         self.LEFT_RECEIVED = True
@@ -134,7 +168,7 @@ class OdometryNode(DTROS):
         self.right_tick_prev += ticks
 
         # update time
-        self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
+        # self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
 
         # compute the new pose
         self.RIGHT_RECEIVED = True
@@ -157,13 +191,14 @@ class OdometryNode(DTROS):
         """
         Publish the pose of the Duckiebot given by the aggregated odometry.
         Publish:
-            ~/robot_localization (:obj:`PoseStamped`): Duckiebot pose.
+            ~/robot_localization (:stamped`): Duckiebot pose.
         """
         if not self.LEFT_RECEIVED or not self.RIGHT_RECEIVED:
             return
 
-        if self.delta_phi_left == 0 and self.delta_phi_right == 0:
-            return
+        # IDEA
+        # if self.delta_phi_left == 0 and self.delta_phi_right == 0:
+        #     return
 
         self.LEFT_RECEIVED = False
         self.RIGHT_RECEIVED = False
@@ -179,10 +214,19 @@ class OdometryNode(DTROS):
 
         # Prediction step:
         # Publisher reads estimated position. Difference to get increment
+        # u = np.array(
+        #     [
+        #         delta_distance * np.cos(delta_theta),
+        #         delta_distance * np.sin(delta_theta),
+        #         delta_theta,
+        #     ]
+        # )
+
+        # Publisher reads estimated position. Difference to get increment IDEA
         u = np.array(
             [
-                delta_distance * np.cos(delta_theta),
-                delta_distance * np.sin(delta_theta),
+                delta_distance * np.cos(self.estimate[2]),
+                delta_distance * np.sin(self.estimate[2]),
                 delta_theta,
             ]
         )
@@ -244,11 +288,11 @@ class OdometryNode(DTROS):
         padded = np.zeros((6, 6))
         padded[:, 0] = np.append(self.P[:, 0], np.zeros(3))
         padded[:, 1] = np.append(self.P[:, 1], np.zeros(3))
-        padded[:, 4] = np.append(self.P[:, 3], np.zeros(3))
+        padded[:, 5] = np.append(np.zeros(3), self.P[:, 2])
 
-        padded = np.pad(
-            self.P, pad_width=((0, 3), (0, 3)), mode="constant", constant_values=0
-        )
+        # padded = np.pad(
+        #     self.P, pad_width=((0, 3), (0, 3)), mode="constant", constant_values=0
+        # )
         odom.pose.covariance = padded.flatten().tolist()
 
         self.log(
@@ -258,17 +302,76 @@ class OdometryNode(DTROS):
 
         self.db_estimated_pose.publish(odom)
 
+    def cbShoePosition(self, msg):
+
+        # self.log(f"{msg}")
+        for i, each_pose in enumerate(msg.points):
+            if each_pose.z == 0:
+                self.shoe_counter[i] = VALID_TIME
+                shoe_dist = each_pose.x
+                shoe_theta = each_pose.y
+
+                # Check if the shoe detected is within the FOV of the ToF sensor
+                if abs(shoe_theta) < self.tof_fov / 2:
+                    shoe_dist = self.dist_to_object
+
+                # Get the shoe position
+                shoe_pos_x = shoe_dist * np.cos(shoe_theta)
+                shoe_pos_y = shoe_dist * np.sin(shoe_theta)
+
+                duckie_pos_x = self.estimate[0]
+                duckie_pos_y = self.estimate[1]
+                duckie_theta = self.estimate[2]
+
+                # Apply the transformations
+                # From origin to duckiebot
+                t_mat_od = np.array(
+                    (
+                        [np.cos(duckie_theta), -np.sin(duckie_theta), duckie_pos_x],
+                        [np.sin(duckie_theta), np.cos(duckie_theta), duckie_pos_y],
+                        [0, 0, 1],
+                    )
+                )
+                # From duckie to shoe
+                t_mat_ds = np.array(
+                    (
+                        [np.cos(shoe_theta), -np.sin(shoe_theta), shoe_pos_x],
+                        [np.sin(shoe_theta), np.cos(shoe_theta), shoe_pos_y],
+                        [0, 0, 1],
+                    )
+                )
+                # Transform
+                t = np.dot(t_mat_od, t_mat_ds)
+
+                # Update with global coordinates
+                self.local_shoe_poses.points[i].x = t[0, 2]
+                self.local_shoe_poses.points[i].y = t[1, 2]
+                self.local_shoe_poses.points[i].z = 0
+                print(f"Shoe is at [{t[0, 2]} , {t[1, 2]}]")
+
+        self.publishShoes(self.local_shoe_poses)
+
+    def publishShoes(self, shoe_pos):
+        # print("Got into publisher!")
+        for i, each_pose in enumerate(shoe_pos.points):
+            if each_pose.z == 0:
+                self.log(f"Shoe {i} is at global coordinates : {each_pose}")
+
+        self.db_shoe_pose.publish(shoe_pos)
+
     def cbToFReading(self, msg):
-        pass
+        self.dist_to_object = msg.range
+        self.tof_fov = msg.field_of_view
+        # self.log(f"Object detected at {self.dist_to_object} fov : {self.tof_fov}")
 
     def onShutdown(self):
         super(OdometryNode, self).on_shutdown()
 
     def read_params_from_calibration_file(self):
         """
-        Reads the saved parameters from `/data/config/calibrations/kinematics/DUCKIEBOTNAME.yaml`
-        or uses the default values if the file doesn't exist. Adjsuts the ROS paramaters for the
-        node with the new values.
+           Reads the saved parameters from `/data/config/calibrations/kinematics/DUCKIEBOTNAME.yaml`
+        local_shoe_poses the default values if the file doesn't exist. Adjsuts the ROS paramaters for the
+           node with the new values.
         """
         # Check file existence
         file_path = (
@@ -311,9 +414,29 @@ class OdometryNode(DTROS):
     #     else:
     #         return theta
 
+    def run(self):
+        # publish message every 0.5 second (2 Hz)
+        rate = rospy.Rate(2)
+
+        while not rospy.is_shutdown():
+            # TODO: for loop, countdown, invalidate shoes
+            for i in range(10):
+                if self.shoe_counter[i] == 0:
+                    self.local_shoe_poses.points[i].x = 0
+                    self.local_shoe_poses.points[i].y = 0
+                    self.local_shoe_poses.points[i].z = -1
+                else:
+                    self.shoe_counter[i] -= 1
+
+            self.db_shoe_pose.publish(self.local_shoe_poses)
+            rate.sleep()
+
 
 if __name__ == "__main__":
     # Initialize the node
     encoder_pose_node = OdometryNode(node_name="odometry_node")
+
+    encoder_pose_node.run()
+
     # Keep it spinning
     rospy.spin()
