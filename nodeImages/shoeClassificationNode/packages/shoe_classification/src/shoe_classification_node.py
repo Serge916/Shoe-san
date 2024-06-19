@@ -88,30 +88,31 @@ class ShoeClassificationNode(DTROS):
 
         # Access Image and bounding boxes
         try:
-            rgb = self.bridge.compressed_imgmsg_to_cv2(image_segment.segimage)
+            bgr = self.bridge.compressed_imgmsg_to_cv2(image_segment.segimage)
         except ValueError as e:
             self.logerr("Could not decode image: %s" % e)
             return
 
-        image_W = rgb.shape[1]
-        image_H = rgb.shape[0]
-        
+        self.log("Received Frame")
+        rgb = bgr[..., ::-1]        
         # Find how many bounding boxes were sent
-        bboxes_msg = image_segment.rects
-        num_images = len(bboxes_msg)
-        bbox_list = []
+        bboxes_distance_msg = image_segment.rects
+        num_images = int(len(bboxes_distance_msg)/2)
+        bbox_list = np.zeros([num_images, 4], dtype=np.int32)
+        distance_list = np.zeros([num_images, 4], dtype=np.float32)
         # Decompress the bounding box coordinates to a list
-        for rect in bboxes_msg:
-            bbox_list.append([rect.x, rect.y, rect.w, rect.h])
+        for idx in range(0, 2*num_images, 2):
+            self.log(bboxes_distance_msg[idx])
+            bbox_list[int(idx/2)] = [bboxes_distance_msg[idx].x, bboxes_distance_msg[idx].y, bboxes_distance_msg[idx].w, bboxes_distance_msg[idx].h]
+            distance_list[int(idx/2)] = [bboxes_distance_msg[idx+1].x, bboxes_distance_msg[idx+1].y, bboxes_distance_msg[idx+1].w, bboxes_distance_msg[idx+1].h]
 
         for i in range(num_images):
             bbox = bbox_list[i]
+            distance = distance_list[i]
             # Crop image based on the bounding boxes
             cropped_image = self.cropImage(rgb, bbox)
-            cropped_image_rescaled = cv2.resize(cropped_image, (IMAGE_SIZE, IMAGE_SIZE))
-
             # Classify image
-            shoe_class = self.model_wrapper.predict(cropped_image_rescaled)
+            shoe_class = self.model_wrapper.predict(cropped_image)
             # self.log(f"Detected {self.convertInt2Str(shoe_class)}'s shoe.")
             # Depending on the classification of the image, set that list ID's values to the bounding boxes
 
@@ -124,36 +125,28 @@ class ShoeClassificationNode(DTROS):
             # Vasilis | 4     #
             ###################
 
-            # Calculate Distance From Object and Orientation
-            object_projection = FOCAL_LENGTH * SHOE_HEIGHT[shoe_class] / bbox[3]
 
-            bound_x = bbox[0] + bbox[2]/2   # Center x-coordinate of lower bound
-            bound_y = bbox[1] + bbox[3]/2   # Center y-coordinate of lower bound
 
-            try:
-                theta = np.arctan((bound_x - image_W/2)/(image_H - bound_y)) * FOV/180
-            except ZeroDivisionError:
-                theta = FOV/180 * np.pi
+            dist = distance[0] + float(distance[1])/1000
+            angle = distance[2] + float(distance[3])/1000
 
-            distance = object_projection / np.cos(theta)
 
             if self.classifiedShoes.points[2*shoe_class].z == -1:
-                self.classifiedShoes.points[2*shoe_class].x = distance
-                self.classifiedShoes.points[2*shoe_class].y = theta
+                self.classifiedShoes.points[2*shoe_class].x = dist
+                self.classifiedShoes.points[2*shoe_class].y = angle
                 self.classifiedShoes.points[2*shoe_class].z = 0
             else: 
-                self.classifiedShoes.points[2*shoe_class+1].x = distance
-                self.classifiedShoes.points[2*shoe_class+1].y = theta
+                self.classifiedShoes.points[2*shoe_class+1].x = dist
+                self.classifiedShoes.points[2*shoe_class+1].y = angle
                 self.classifiedShoes.points[2*shoe_class+1].z = 0
             
             # For Debugging
-            bgr = cropped_image_rescaled[..., ::-1]
+            bgr = cropped_image[..., ::-1]
             obj_det_img = self.bridge.cv2_to_compressed_imgmsg(bgr)
             self.pub_detections_image.publish(obj_det_img)
         
-        for idx in range(0,2*NUM_OF_CLASSES,2):
-            if self.classifiedShoes.points[idx].z == 0:
-                self.log(f"Distance from {self.convertInt2Str(idx//2)}'s Shoe: {self.classifiedShoes.points[idx]}")
+            
+            self.log(f"Orientation of {self.convertInt2Str(shoe_class)}'s Shoe: ({dist}m, {angle}rad)")
 
         self.pub_class_bboxes(image_segment.segimage.header, self.classifiedShoes)
         return
