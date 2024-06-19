@@ -7,7 +7,7 @@ dt-launchfile-init
 
 # launch subscriber
 # export VEHICLE_NAME="db3"
-rosrun customPackage pid.py
+rosrun customPackage pid_control.py
 
 # wait for app to end
 dt-launchfile-join
