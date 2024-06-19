@@ -138,6 +138,7 @@ class ObjectDetectionNode(DTROS):
             return
 
         rgb = bgr[..., ::-1]
+        height_distorted, width_distorted = rgb.shape[:2]
 
         # Undistort the image
         undistorted_rgb = cv2.undistort(rgb, K, D, None, self.newK)
@@ -177,16 +178,18 @@ class ObjectDetectionNode(DTROS):
         shoe_bboxes.rects = []
         people_bboxes = []
 
-        scale_x = width_undistorted / IMAGE_SIZE
-        scale_y = height_undistorted / IMAGE_SIZE
-
+        scale_undistorted_x = width_undistorted / IMAGE_SIZE
+        scale_undistorted_y = height_undistorted / IMAGE_SIZE
+        scale_distorted_x = width_distorted / IMAGE_SIZE
+        scale_distorted_y = height_distorted / IMAGE_SIZE
         for clas, box in zip(classes, bboxes):
+            box = [box[0]*scale_distorted_x, box[1]*scale_distorted_y, box[2]*scale_distorted_x, box[3]*scale_distorted_y]
             # TODO! Check the signs of these values
             rect_distorted = Rect()
             rect_distorted.x = int(box[0])
             rect_distorted.y = int(box[1])
-            rect_distorted.w = int(box[2]) - rect_distorted.x
-            rect_distorted.h = int(box[3]) - rect_distorted.y
+            rect_distorted.w = int(box[2] - box[0])
+            rect_distorted.h = int(box[3] - box[1])
 
             undistorted_box_points = np.array(
                 [[[box[0], box[1]]], [[box[2], box[3]]]], dtype=np.float32
@@ -210,10 +213,10 @@ class ObjectDetectionNode(DTROS):
             try:
                 angle = (
                     np.arctan(
-                        (
-                            rect_undistorted.x
-                            + rect_undistorted.w / 2
-                            - width_undistorted / 2
+                        (   
+                            width_undistorted / 2
+                            - rect_undistorted.x
+                            - rect_undistorted.w / 2
                         )
                         / (
                             height_undistorted
@@ -247,22 +250,20 @@ class ObjectDetectionNode(DTROS):
             if self._debug:
                 colors = {0: (0, 255, 255), 1: (0, 165, 255)}
 
-                pt1 = np.array([rect_undistorted.x, rect_undistorted.y])
-                pt2 = np.array([int(box[2]), int(box[3])])
+                pt1 = np.array(object=[rect_undistorted.x, rect_undistorted.y])
+                pt2 = np.array([rect_undistorted.x + rect_undistorted.w, rect_undistorted.y + rect_undistorted.h])
                 pt1 = tuple(pt1)
                 pt2 = tuple(pt2)
                 color = tuple(reversed(colors[clas]))
-                # theta = np.arctan()
-                # distance_y = 228.15 * 100 / rect.h
-                # angle =
-                name = f"{names[clas]}({total_distance} mm))"
+
+                name = f"{names[clas]}: ({total_distance:.2f}m, {angle*(180/np.pi):.2f}deg)"
                 # draw bounding box
                 undistorted_rgb = cv2.rectangle(undistorted_rgb, pt1, pt2, color, 2)
                 # label location
                 text_location = (pt1[0], min(pt2[1] + 30, height_undistorted))
                 # draw label underneath the bounding box
                 undistorted_rgb = cv2.putText(
-                    undistorted_rgb, name, text_location, font, 1, color, thickness=2
+                    undistorted_rgb, name, text_location, font, 0.4, color, thickness=2
                 )
 
         if len(shoe_bboxes.rects) != 0:

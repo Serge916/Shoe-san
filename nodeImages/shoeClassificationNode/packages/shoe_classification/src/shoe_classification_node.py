@@ -34,6 +34,12 @@ class ShoeClassificationNode(DTROS):
             shoe_class_topic, PointCloud, queue_size=1, dt_topic_type=TopicType.PERCEPTION
         )
 
+        # Construct publishers
+        debug_topic = f"/{self.veh}/shoe_class_node/debug_topic"
+        self.pub_debug_cmd = rospy.Publisher(
+            debug_topic, CompressedImage, queue_size=1, dt_topic_type=TopicType.VISUALIZATION
+        )
+
         # Debug image with rectangles
         self.pub_detections_image = rospy.Publisher(
             "~image/debug_compressed",
@@ -94,7 +100,7 @@ class ShoeClassificationNode(DTROS):
             return
 
         self.log("Received Frame")
-        rgb = bgr[..., ::-1]        
+        rgb = bgr[..., ::-1]
         # Find how many bounding boxes were sent
         bboxes_distance_msg = image_segment.rects
         num_images = int(len(bboxes_distance_msg)/2)
@@ -111,6 +117,13 @@ class ShoeClassificationNode(DTROS):
             distance = distance_list[i]
             # Crop image based on the bounding boxes
             cropped_image = self.cropImage(rgb, bbox)
+
+            bgr_cropped_image = cropped_image[..., ::-1]  
+            msg = self.bridge.cv2_to_compressed_imgmsg(bgr_cropped_image)
+            self.pub_debug_cmd.publish(msg)
+
+
+
             # Classify image
             shoe_class = self.model_wrapper.predict(cropped_image)
             # self.log(f"Detected {self.convertInt2Str(shoe_class)}'s shoe.")
@@ -162,7 +175,7 @@ class ShoeClassificationNode(DTROS):
             
             
     def cropImage(self, image, bbox):
-
+        
         image_arr = image[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]] 
 
         cropped_image = cv2.resize(image_arr, (IMAGE_SIZE, IMAGE_SIZE))
