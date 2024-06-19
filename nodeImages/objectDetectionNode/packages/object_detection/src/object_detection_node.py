@@ -12,7 +12,7 @@ from cv_bridge import CvBridge
 from sensor_msgs.msg import CompressedImage
 
 
-from nn_model.constants import IMAGE_SIZE, OG_IMAGE_WIDTH, OG_IMAGE_HEIGHT, K, D
+from nn_model.constants import *
 from nn_model.model import Wrapper
 
 
@@ -143,11 +143,16 @@ class ObjectDetectionNode(DTROS):
         undistorted_rgb = cv2.undistort(rgb, K, D, None, self.newK)
 
         # Crop the image (if necessary)
-        x, y, w, h = self.regionOfInterest
-        undistorted_rgb = undistorted_rgb[y : y + h, x : x + w]
-        resized_rgb = cv2.resize(undistorted_rgb, (IMAGE_SIZE, IMAGE_SIZE))
+        offset_x, offset_y, width_undistorted, height_undistorted = (
+            self.regionOfInterest
+        )
+        undistorted_rgb = undistorted_rgb[
+            offset_y : offset_y + height_undistorted,
+            offset_x : offset_x + width_undistorted,
+        ]
+        resized_distorted = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE))
 
-        bboxes, classes, scores = self.model_wrapper.predict(resized_rgb)
+        bboxes, classes, scores = self.model_wrapper.predict(resized_distorted)
         classes = [int(classes[x]) % NUM_OF_CLASSES for x in range(len(classes))]
 
         detection = self.det2bool(bboxes, classes, scores)
@@ -167,53 +172,94 @@ class ObjectDetectionNode(DTROS):
 
         shoe_bboxes = SceneSegments()
         shoe_bboxes.segimage.header = image_msg.header
-        # TODO! Check if I have to copy the data not only the pointer (probably but I forgot how python works)
-        _, im_buf_arr = cv2.imencode(".png", undistorted_rgb)
-        shoe_bboxes.segimage.data = im_buf_arr.tobytes()
+        shoe_bboxes.segimage.data = image_msg.data
+
         shoe_bboxes.rects = []
         people_bboxes = []
 
-        scale_x = w / IMAGE_SIZE
-        scale_y = h / IMAGE_SIZE
+        scale_x = width_undistorted / IMAGE_SIZE
+        scale_y = height_undistorted / IMAGE_SIZE
+
         for clas, box in zip(classes, bboxes):
             # TODO! Check the signs of these values
-            undistorted_box = [
-                int(box[0] * scale_x),
-                int(box[1] * scale_y),
-                int(box[2] * scale_x),
-                int(box[3] * scale_y),
-            ]
+            rect_distorted = Rect()
+            rect_distorted.x = int(box[0])
+            rect_distorted.y = int(box[1])
+            rect_distorted.w = int(box[2]) - rect_distorted.x
+            rect_distorted.h = int(box[3]) - rect_distorted.y
 
-            rect = Rect()
-            rect.x = int(undistorted_box[0])
-            rect.y = int(undistorted_box[1])
-            rect.w = int(undistorted_box[2]) - rect.x
-            rect.h = int(undistorted_box[3]) - rect.y
+            undistorted_box_points = np.array(
+                [[[box[0], box[1]]], [[box[2], box[3]]]], dtype=np.float32
+            )
+            undistorted_points = cv2.undistortPoints(
+                undistorted_box_points, K, D, None, self.newK
+            )
+
+            rect_undistorted = Rect()
+            rect_undistorted.x = int(undistorted_points[0][0][0] - offset_x)
+            rect_undistorted.y = int(undistorted_points[0][0][1] - offset_y)
+            rect_undistorted.w = (
+                int(undistorted_points[1][0][0] - offset_x) - rect_undistorted.x
+            )
+            rect_undistorted.h = (
+                int(undistorted_points[1][0][1] - offset_y) - rect_undistorted.y
+            )
+
+            distance_x = FOCAL_LENGTH * SHOE_HEIGHT / rect_undistorted.h
+
+            try:
+                angle = (
+                    np.arctan(
+                        (
+                            rect_undistorted.x
+                            + rect_undistorted.w / 2
+                            - width_undistorted / 2
+                        )
+                        / (
+                            height_undistorted
+                            - rect_undistorted.y
+                            - rect_undistorted.h / 2
+                        )
+                    )
+                    * FOV
+                    / 180
+                )
+            except ZeroDivisionError:
+                angle = FOV / 180 * np.pi
+
+            total_distance = distance_x / np.cos(angle)
+
+            extra_data = Rect()
+            extra_data.x = int(total_distance)
+            extra_data.y = int(total_distance * 1000) - extra_data.x * 1000
+            extra_data.w = int(angle)
+            extra_data.h = int(angle * 1000) - extra_data.w * 1000
 
             if clas == 0:
                 # Then it has detected people, so we populate the info for the people_bboxes
-                people_bboxes.append(rect)
+                people_bboxes.append(rect_distorted)
+                people_bboxes.append(extra_data)
             elif clas == 1:
                 # Then it has detected a shoe, so populetes the message for the classifier
-                shoe_bboxes.rects.append(rect)
+                shoe_bboxes.rects.append(rect_distorted)
+                shoe_bboxes.rects.append(extra_data)
 
             if self._debug:
                 colors = {0: (0, 255, 255), 1: (0, 165, 255)}
 
-                pt1 = np.array([rect.x, rect.y])
-                pt2 = np.array([int(undistorted_box[2]), int(undistorted_box[3])])
+                pt1 = np.array([rect_undistorted.x, rect_undistorted.y])
+                pt2 = np.array([int(box[2]), int(box[3])])
                 pt1 = tuple(pt1)
                 pt2 = tuple(pt2)
                 color = tuple(reversed(colors[clas]))
-                distance = 228.15 * 100 / rect.h
                 # theta = np.arctan()
                 # distance_y = 228.15 * 100 / rect.h
                 # angle =
-                name = f"{names[clas]}({distance} mm))"
+                name = f"{names[clas]}({total_distance} mm))"
                 # draw bounding box
                 undistorted_rgb = cv2.rectangle(undistorted_rgb, pt1, pt2, color, 2)
                 # label location
-                text_location = (pt1[0], min(pt2[1] + 30, h))
+                text_location = (pt1[0], min(pt2[1] + 30, height_undistorted))
                 # draw label underneath the bounding box
                 undistorted_rgb = cv2.putText(
                     undistorted_rgb, name, text_location, font, 1, color, thickness=2
