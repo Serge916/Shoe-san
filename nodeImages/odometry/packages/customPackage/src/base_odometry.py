@@ -30,10 +30,6 @@ class OdometryNode(DTROS):
             distance to the tag, tag id and angle of view
     """
 
-    distance_debug = 0
-    ticks_left_debug = 0
-    ticks_right_debug = 0
-
     def __init__(self, node_name):
         # Initialize the DTROS parent class
         super(OdometryNode, self).__init__(
@@ -53,6 +49,9 @@ class OdometryNode(DTROS):
 
         self.time_now: float = 0.0
         self.time_last_step: float = 0.0
+
+        self.LEFT_RECEIVED = False
+        self.RIGHT_RECEIVED = False
 
         # Init the parameters
         self.resetParameters()
@@ -107,7 +106,6 @@ class OdometryNode(DTROS):
             return
 
         ticks = encoder_msg.data - self.left_tick_prev
-        OdometryNode.ticks_left_debug += ticks
         dphi = ticks / encoder_msg.resolution
         self.delta_phi_left += dphi
         self.left_tick_prev += ticks
@@ -117,7 +115,6 @@ class OdometryNode(DTROS):
 
         # compute the new pose
         self.LEFT_RECEIVED = True
-        print(f"Left encoder signaled {ticks}")
         self.poseEstimator()
 
     def cbRightEncoder(self, encoder_msg):
@@ -132,7 +129,6 @@ class OdometryNode(DTROS):
             return
 
         ticks = encoder_msg.data - self.right_tick_prev
-        OdometryNode.ticks_right_debug += ticks
         dphi = ticks / encoder_msg.resolution
         self.delta_phi_right += dphi
         self.right_tick_prev += ticks
@@ -142,20 +138,18 @@ class OdometryNode(DTROS):
 
         # compute the new pose
         self.RIGHT_RECEIVED = True
-        print(f"Right encoder signaled {ticks}. Resolution is {encoder_msg.resolution}")
         self.poseEstimator()
 
     def resetParameters(self):
         # Initialize the Kalman filter
         # Initial state [x, y, theta]
         self.estimate = np.array([0, 0, 0])
-        # self.estimate = np.array([[0], [0], [0]])
         # Initial covariance matrix
-        self.P = np.eye(3)
+        self.P = np.zeros((3, 3))
         # Process noise covariance matrix
-        self.Q = np.diag([0.1, 0.1, 0.01])
+        self.Q = Q
         # Measurement noise covariance
-        self.R = np.diag([0.5, 0.5])
+        self.R = R
         # Measurement prediction
         self.H = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
 
@@ -168,18 +162,21 @@ class OdometryNode(DTROS):
         if not self.LEFT_RECEIVED or not self.RIGHT_RECEIVED:
             return
 
-        left_wheel_distance = self.delta_phi_left * (2 * np.pi * R)
-        right_wheel_distance = self.delta_phi_right * (2 * np.pi * R)
+        if self.delta_phi_left == 0 and self.delta_phi_right == 0:
+            return
+
+        self.LEFT_RECEIVED = False
+        self.RIGHT_RECEIVED = False
+
+        left_wheel_distance = self.delta_phi_left * (2 * np.pi * RADIUS)
+        right_wheel_distance = self.delta_phi_right * (2 * np.pi * RADIUS)
         delta_distance = (right_wheel_distance + left_wheel_distance) / 2
         delta_theta = (right_wheel_distance - left_wheel_distance) / BASELINE
+        delta_theta = self.angle_clamp(delta_theta)
 
-        OdometryNode.distance_debug += delta_distance
         # Calculate new odometry only when new data from encoders arrives
         self.delta_phi_left = self.delta_phi_right = 0
 
-        self.log(
-            f"Travelled distance is {OdometryNode.distance_debug}. Ticks are: {OdometryNode.ticks_left_debug},{OdometryNode.ticks_right_debug}"
-        )
         # Prediction step:
         # Publisher reads estimated position. Difference to get increment
         u = np.array(
@@ -189,30 +186,30 @@ class OdometryNode(DTROS):
                 delta_theta,
             ]
         )
-        # u = np.array(
-        #     [
-        #         [delta_distance * np.cos(delta_theta)],
-        #         [delta_distance * np.sin(delta_theta)],
-        #         [delta_theta],
-        #     ]
-        # )
+
         self.F = np.eye(3)
         # Control input model
         self.B = np.eye(3)
         # Predict the state
         self.estimate = self.F @ self.estimate + self.B @ u
+        self.estimate[2] = self.angle_clamp(self.estimate[2])
         # Predict the error covariance
         self.P = self.F @ self.P @ np.transpose(self.F) + self.Q
         self.publishOdometry()
 
     def cbAprilTagReading(self, msg):
-        distanceToTag = msg.distance
-        angleOfView = msg.angle
-        tagOrientation = self.tagPlacement(msg.tagId)
-        # If angleOfView belongs in (0,180) and tagOrientation in (0,360)
-        x = np.cos(angleOfView) * distanceToTag
-        y = np.sin(angleOfView) * distanceToTag
-        theta = self.angle_clamp(angleOfView - np.pi / 2 + tagOrientation)
+        """
+        Gives a reliable estimation of the robot position and orientation.
+        Args:
+            phi: Angle measured from the direction of looking straight into the tag and the orientation of the boot
+            alpha: Angle measured from the perspective of the tag. Direction to the robot
+            distance: Distance from robot to tag
+            id: Tag unique identifier
+        """
+        tag_orientation = TAG_ORIENTATIONS.get(id)
+        theta = msg.alpha - np.pi + msg.phi + tag_orientation
+        x = msg.distance * np.cos(theta)
+        y = msg.distance * np.sin(theta)
 
         z = np.array([x, y, theta])
         # Measurement model
@@ -244,14 +241,24 @@ class OdometryNode(DTROS):
         odom.pose.pose.orientation.z = np.sin(self.estimate[2] / 2)
         odom.pose.pose.orientation.w = np.cos(self.estimate[2] / 2)
 
+        padded = np.zeros((6, 6))
+        padded[:, 0] = np.append(self.P[:, 0], np.zeros(3))
+        padded[:, 1] = np.append(self.P[:, 1], np.zeros(3))
+        padded[:, 4] = np.append(self.P[:, 3], np.zeros(3))
+
+        padded = np.pad(
+            self.P, pad_width=((0, 3), (0, 3)), mode="constant", constant_values=0
+        )
+        odom.pose.covariance = padded.flatten().tolist()
+
         self.log(
-            f"Robot position is estimated to be: {self.estimate}"
+            f"Robot position is estimated to be: {self.estimate}. Covariance is {odom.pose.covariance}"
             # f"Robot position is estimated to be: x:{self.estimate[0]}, y:{self.estimate[1]}, theta:{self.estimate[2]}"
         )
 
         self.db_estimated_pose.publish(odom)
 
-    def cbToFReading():
+    def cbToFReading(self, msg):
         pass
 
     def onShutdown(self):
@@ -290,12 +297,19 @@ class OdometryNode(DTROS):
 
     @staticmethod
     def angle_clamp(theta):
-        if theta > 2 * np.pi:
-            return theta - 2 * np.pi
-        elif theta < 0:
-            return theta + 2 * np.pi
-        else:
-            return theta
+        while theta > np.pi:
+            theta -= 2 * np.pi
+        while theta < -np.pi:
+            theta += 2 * np.pi
+        return theta
+
+    # def angle_clamp(theta):
+    #     if theta > 2 * np.pi:
+    #         return theta - 2 * np.pi
+    #     elif theta < 0:
+    #         return theta + 2 * np.pi
+    #     else:
+    #         return theta
 
 
 if __name__ == "__main__":
