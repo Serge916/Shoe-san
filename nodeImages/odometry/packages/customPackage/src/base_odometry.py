@@ -3,6 +3,7 @@ import os
 import time
 from typing import Optional, Tuple
 
+import tf
 import numpy as np
 import rospy
 import yaml
@@ -10,8 +11,9 @@ from duckietown.dtros import DTROS, NodeType, TopicType
 from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped, Pose2DStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Bool
-from geometry_msgs.msg import Point32
+from geometry_msgs.msg import Point32, Quaternion
 from sensor_msgs.msg import Range, PointCloud, ChannelFloat32
+from visualization_msgs.msg import MarkerArray, Marker
 
 from constants import *
 
@@ -82,6 +84,31 @@ class OdometryNode(DTROS):
         # self.log("Loading odometry calibration...")
         # self.read_params_from_calibration_file()  # must have a custom robot calibration
 
+        # Odometry publisher
+        self.db_estimated_pose = rospy.Publisher(
+            f"/{self.veh}/robot_odometry/odometry",
+            Odometry,
+            queue_size=1,
+            dt_topic_type=TopicType.LOCALIZATION,
+        )
+
+        # Shoe position publisher
+        self.db_shoe_pose = rospy.Publisher(
+            f"/{self.veh}/robot_odometry/shoe_positions",
+            PointCloud,
+            queue_size=10,
+            dt_topic_type=TopicType.LOCALIZATION,
+        )
+
+        # Construct publishers
+        april_tags_pos_topic = f"/{self.veh}/odometry_node/april_tags_position"
+        self.pub_tag_position = rospy.Publisher(
+            april_tags_pos_topic,
+            MarkerArray,
+            queue_size=1,
+            dt_topic_type=TopicType.PERCEPTION,
+        )
+
         # Defining subscribers:
         # Wheel encoder subscriber:
         left_encoder_topic = f"/{self.veh}/left_wheel_encoder_node/tick"
@@ -96,9 +123,9 @@ class OdometryNode(DTROS):
         )
 
         # April tag subscriber:
-        left_encoder_topic = f"/{self.veh}/april_tags/obtained_data"
+        april_tags_topic = f"/{self.veh}/april_tags_node/april_tags"
         rospy.Subscriber(
-            left_encoder_topic, Pose2DStamped, self.cbAprilTagReading, queue_size=1
+            april_tags_topic, Quaternion, self.cbAprilTagReading, queue_size=1
         )
         # Time-of-flight subscriber:
         left_encoder_topic = f"/{self.veh}/front_center_tof_driver_node/range"
@@ -108,22 +135,6 @@ class OdometryNode(DTROS):
         left_encoder_topic = f"/{self.veh}/shoe_class_node/shoe_class"
         rospy.Subscriber(
             left_encoder_topic, PointCloud, self.cbShoePosition, queue_size=1
-        )
-
-        # Odometry publisher
-        self.db_estimated_pose = rospy.Publisher(
-            f"/{self.veh}/robot_odometry/odometry",
-            Odometry,
-            queue_size=1,
-            dt_topic_type=TopicType.LOCALIZATION,
-        )
-
-        # Shoe posiition publisher
-        self.db_shoe_pose = rospy.Publisher(
-            f"/{self.veh}/robot_odometry/shoe_positions",
-            PointCloud,
-            queue_size=10,
-            dt_topic_type=TopicType.LOCALIZATION,
         )
 
         self.log("Initialized.")
@@ -144,9 +155,6 @@ class OdometryNode(DTROS):
         self.delta_phi_left += dphi
         self.left_tick_prev += ticks
 
-        # update time
-        # self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
-
         # compute the new pose
         self.LEFT_RECEIVED = True
         self.poseEstimator()
@@ -166,9 +174,6 @@ class OdometryNode(DTROS):
         dphi = ticks / encoder_msg.resolution
         self.delta_phi_right += dphi
         self.right_tick_prev += ticks
-
-        # update time
-        # self.time_now = max(self.time_now, encoder_msg.header.stamp.to_sec())
 
         # compute the new pose
         self.RIGHT_RECEIVED = True
@@ -212,16 +217,6 @@ class OdometryNode(DTROS):
         # Calculate new odometry only when new data from encoders arrives
         self.delta_phi_left = self.delta_phi_right = 0
 
-        # Prediction step:
-        # Publisher reads estimated position. Difference to get increment
-        # u = np.array(
-        #     [
-        #         delta_distance * np.cos(delta_theta),
-        #         delta_distance * np.sin(delta_theta),
-        #         delta_theta,
-        #     ]
-        # )
-
         # Publisher reads estimated position. Difference to get increment IDEA
         u = np.array(
             [
@@ -246,26 +241,44 @@ class OdometryNode(DTROS):
         Gives a reliable estimation of the robot position and orientation.
         Args:
             phi: Angle measured from the direction of looking straight into the tag and the orientation of the boot
-            alpha: Angle measured from the perspective of the tag. Direction to the robot
+            psi: Angle measured from the perspective of the tag. Direction to the robot
             distance: Distance from robot to tag
             id: Tag unique identifier
         """
-        tag_orientation = TAG_ORIENTATIONS.get(id)
-        theta = msg.alpha - np.pi + msg.phi + tag_orientation
-        x = msg.distance * np.cos(theta)
-        y = msg.distance * np.sin(theta)
+        tag_id = int(msg.x)
+        distance = msg.y
+        phi = msg.z
+        psi = msg.w
 
-        z = np.array([x, y, theta])
+        beta = psi - phi
+
+        tag_orientation = TAG_POSES.get(tag_id)[2]
+        tag_x_position = TAG_POSES.get(tag_id)[0]
+        tag_y_position = TAG_POSES.get(tag_id)[1]
+
+        theta = psi + np.pi / 2 * (tag_id - 1)
+
+        coord_x = tag_x_position + distance * np.sin(beta + tag_orientation)
+        coord_y = tag_y_position - distance * np.cos(beta + tag_orientation)
+
+        new_update = np.array([coord_x, coord_y, theta])
         # Measurement model
-        y = z - self.H @ self.estimate
+        difference = new_update - self.H @ self.estimate
         # Measurement covariance
+        # S = self.H @ self.P @ np.transpose(self.H) + self.R * (
+        #     distance * 10 + abs(phi) * 100
+        # )
         S = self.H @ self.P @ np.transpose(self.H) + self.R
         # Kalman gain
         K = self.P @ np.transpose(self.H) @ np.linalg.inv(S)
         # Update the state
-        self.estimate = self.estimate + K @ y
+        self.estimate = self.estimate + K @ difference
         # Update the error covariance
         self.P = self.P - K @ self.H @ self.P
+
+        self.log(
+            f"April tag reading. id: {tag_id} phi: {np.rad2deg(phi)}, psi: {np.rad2deg(psi)}, beta: {np.rad2deg(beta)}, dist: {distance}. Robot in ({self.estimate[0]}, {self.estimate[1]}, {np.rad2deg(self.estimate[2])}, theta not estimate {theta})"
+        )
 
         self.publishOdometry()
 
@@ -285,6 +298,15 @@ class OdometryNode(DTROS):
         odom.pose.pose.orientation.z = np.sin(self.estimate[2] / 2)
         odom.pose.pose.orientation.w = np.cos(self.estimate[2] / 2)
 
+        br = tf.TransformBroadcaster()
+        br.sendTransform(
+            (self.estimate[0], self.estimate[1], 0),
+            tf.transformations.quaternion_from_euler(0, 0, self.estimate[2]),
+            rospy.Time.now(),
+            f"{self.veh}/base",
+            "map",
+        )
+
         padded = np.zeros((6, 6))
         padded[:, 0] = np.append(self.P[:, 0], np.zeros(3))
         padded[:, 1] = np.append(self.P[:, 1], np.zeros(3))
@@ -295,10 +317,10 @@ class OdometryNode(DTROS):
         # )
         odom.pose.covariance = padded.flatten().tolist()
 
-        self.log(
-            f"Robot position is estimated to be: {self.estimate}. Covariance is {odom.pose.covariance}"
-            # f"Robot position is estimated to be: x:{self.estimate[0]}, y:{self.estimate[1]}, theta:{self.estimate[2]}"
-        )
+        # self.log(
+        #     f"Robot position is estimated to be: {self.estimate}. Covariance is {odom.pose.covariance}"
+        #     # f"Robot position is estimated to be: x:{self.estimate[0]}, y:{self.estimate[1]}, theta:{self.estimate[2]}"
+        # )
 
         self.db_estimated_pose.publish(odom)
 
@@ -306,7 +328,7 @@ class OdometryNode(DTROS):
 
         # self.log(f"{msg}")
         for i, each_pose in enumerate(msg.points):
-            if each_pose.z == 0:
+            if each_pose.z > 0:
                 self.shoe_counter[i] = VALID_TIME
                 shoe_dist = each_pose.x
                 shoe_theta = each_pose.y
@@ -355,9 +377,8 @@ class OdometryNode(DTROS):
         # print("Got into publisher!")
         for i, each_pose in enumerate(shoe_pos.points):
             if each_pose.z == 0:
-                self.log(f"Shoe {i} is at global coordinates : {each_pose}")
-
-        self.db_shoe_pose.publish(shoe_pos)
+                # self.log(f"Shoe {i} is at global coordinates : {each_pose}")
+                self.db_shoe_pose.publish(shoe_pos)
 
     def cbToFReading(self, msg):
         self.dist_to_object = msg.range
@@ -367,37 +388,6 @@ class OdometryNode(DTROS):
     def onShutdown(self):
         super(OdometryNode, self).on_shutdown()
 
-    def read_params_from_calibration_file(self):
-        """
-           Reads the saved parameters from `/data/config/calibrations/kinematics/DUCKIEBOTNAME.yaml`
-        local_shoe_poses the default values if the file doesn't exist. Adjsuts the ROS paramaters for the
-           node with the new values.
-        """
-        # Check file existence
-        file_path = (
-            "/code/catkin_ws/src/mobility/assets/calibrations/odometry/default.yaml"
-        )
-
-        if not os.path.isfile(file_path):
-            self.logfatal("Odometry calibration %s not found!" % file_path)
-            rospy.signal_shutdown("")
-        else:
-            self.readFile(file_path)
-
-    def readFile(self, fname):
-        with open(fname, "r") as in_file:
-            try:
-                yaml_dict = yaml.load(in_file, Loader=yaml.FullLoader)
-                self.log(yaml_dict)
-                self.R = yaml_dict["radius"]
-
-            except yaml.YAMLError as exc:
-                self.logfatal(
-                    "YAML syntax error. File: %s fname. Exc: %s" % (fname, exc)
-                )
-                rospy.signal_shutdown("")
-                return
-
     @staticmethod
     def angle_clamp(theta):
         while theta > np.pi:
@@ -405,14 +395,6 @@ class OdometryNode(DTROS):
         while theta < -np.pi:
             theta += 2 * np.pi
         return theta
-
-    # def angle_clamp(theta):
-    #     if theta > 2 * np.pi:
-    #         return theta - 2 * np.pi
-    #     elif theta < 0:
-    #         return theta + 2 * np.pi
-    #     else:
-    #         return theta
 
     def run(self):
         # publish message every 0.5 second (2 Hz)
@@ -428,6 +410,34 @@ class OdometryNode(DTROS):
                 else:
                     self.shoe_counter[i] -= 1
 
+            update_msg = MarkerArray()
+
+            for id in range(4):
+                marker = Marker()
+                marker.header.frame_id = "map"  # Marker type
+                marker.id = id  # Tag id
+                marker.type = 1
+                marker.action = 0
+                marker.pose.position.x = TAG_POSES[id][0]  # x-axis location
+                marker.pose.position.y = TAG_POSES[id][1]  # y-axis location
+                marker.pose.position.z = 0
+                marker.pose.orientation.x = 0
+                marker.pose.orientation.y = 0
+                marker.pose.orientation.z = np.sin(TAG_POSES[id][2] / 2)
+                marker.pose.orientation.w = np.cos(TAG_POSES[id][2] / 2)
+
+                marker.color.r = 1 if id == 0 else 0
+                marker.color.g = 1 if id == 1 else 0
+                marker.color.b = 1 if id == 2 else 0
+                marker.color.a = 1
+
+                marker.scale.x = 0.01
+                marker.scale.y = 0.11
+                marker.scale.z = 0.11
+
+                update_msg.markers.append(marker)
+
+            self.pub_tag_position.publish(update_msg)
             self.db_shoe_pose.publish(self.local_shoe_poses)
             rate.sleep()
 
