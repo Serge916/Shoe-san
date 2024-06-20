@@ -60,16 +60,16 @@ class Wrapper:
                 R, _ = cv2.Rodrigues(rvec)
                 # Calculate the orientation of the tag in the camera frame
                 # Assuming the Z-axis is forward and the X-axis is to the right
-                angle_to_tag = np.arcsin(R[2, 0])*180/np.pi
+                angle_psi =np.pi/2 - np.arcsin(R[2, 0])
 
                 # Calculate distance to the tag
                 distance = np.sqrt(x**2+z**2)
 
                 # Calculate angle to the tag (assuming the camera is facing along the Z-axis)
-                angle = np.arctan2(x, z)*180/np.pi
+                angle_phi = np.arctan2(x, z)
 
                 # Calculate the angle of the robot wrt the tag's orientation
                 # pose = np.arcsin(detection.pose_R[2][0])*180/np.pi
 
-                array_det.append([detection.tag_id, distance, angle, angle_to_tag, pt1, pt2])
+                array_det.append([detection.tag_id, distance, angle_phi, angle_psi, pt1, pt2])
         return array_det

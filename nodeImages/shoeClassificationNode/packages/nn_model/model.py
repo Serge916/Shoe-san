@@ -71,8 +71,8 @@ class Wrapper:
         image = image.unsqueeze(0)
 
         output = self.model(image)
-        _, predicted = torch.max(output.data, 1)
-        return int(predicted)
+        confidence, predicted = torch.max(output.data, 1)
+        return int(predicted), confidence[0]
 
 class SimpleCNN(nn.Module):
     def __init__(self, num_classes: int):

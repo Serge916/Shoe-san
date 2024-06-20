@@ -125,7 +125,7 @@ class ShoeClassificationNode(DTROS):
 
 
             # Classify image
-            shoe_class = self.model_wrapper.predict(cropped_image)
+            shoe_class, confidence = self.model_wrapper.predict(cropped_image)
             # self.log(f"Detected {self.convertInt2Str(shoe_class)}'s shoe.")
             # Depending on the classification of the image, set that list ID's values to the bounding boxes
 
@@ -147,11 +147,11 @@ class ShoeClassificationNode(DTROS):
             if self.classifiedShoes.points[2*shoe_class].z == -1:
                 self.classifiedShoes.points[2*shoe_class].x = dist
                 self.classifiedShoes.points[2*shoe_class].y = angle
-                self.classifiedShoes.points[2*shoe_class].z = 0
+                self.classifiedShoes.points[2*shoe_class].z = confidence
             else: 
                 self.classifiedShoes.points[2*shoe_class+1].x = dist
                 self.classifiedShoes.points[2*shoe_class+1].y = angle
-                self.classifiedShoes.points[2*shoe_class+1].z = 0
+                self.classifiedShoes.points[2*shoe_class+1].z = confidence
             
             # For Debugging
             bgr = cropped_image[..., ::-1]
@@ -159,7 +159,7 @@ class ShoeClassificationNode(DTROS):
             self.pub_detections_image.publish(obj_det_img)
         
             
-            self.log(f"Orientation of {self.convertInt2Str(shoe_class)}'s Shoe: ({dist}m, {angle}rad)")
+            self.log(f"Orientation of {self.convertInt2Str(shoe_class)}'s Shoe: ({dist}m, {angle*180/np.pi}rad) with confidence of {confidence*100}%")
 
         self.pub_class_bboxes(image_segment.segimage.header, self.classifiedShoes)
         return
