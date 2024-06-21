@@ -1,4 +1,4 @@
-# Duckiebot Visual Control, Motion Control, and Path Planning
+# Shoe-san: Environment analyzer and path planner Duckietown project
 
 ## Approach
 
