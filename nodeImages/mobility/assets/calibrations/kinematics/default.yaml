@@ -7,10 +7,10 @@ trim: 0.005
 v_max: 1.0
 omega_max: 8.00
 
-kp_angular: 1
-ki_angular: 0.5
-kd_angular: 0.08
+kp_angular: 0.4
+ki_angular: 0.3
+kd_angular: 0.1
 
 kp_linear: 0.8
-ki_linear: 0.8
+ki_linear: 0.2
 kd_linear: 0.05

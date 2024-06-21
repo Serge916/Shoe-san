@@ -216,8 +216,8 @@ class PlannerNode(DTROS):
             return followPath
 
         if path_decision == SERGE_LOOK:
-            delta_theta = self.duckie_theta - math.atan2(y1-self.duckie_y,x1-self.duckie_x)
-            lookPath = {0:[self.duckie_x, self.duckie_y, delta_theta]}
+            theta = math.atan2(y1-self.duckie_y,x1-self.duckie_x)
+            lookPath = {0:[self.duckie_x, self.duckie_y, theta]}
             return lookPath
         
         if path_decision == NOTHING_IN_SIGHT:

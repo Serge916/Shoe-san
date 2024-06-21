@@ -24,7 +24,7 @@ class CameraReaderNode(DTROS):
         raw_camera_topic = f"/{self._vehicle_name}/camera_node/image/compressed"
 
         
-        self._camera_topic = obj_det_topic
+        self._camera_topic = april_tag_topic
 
         # bridge between OpenCV and ROS
         self._bridge = CvBridge()

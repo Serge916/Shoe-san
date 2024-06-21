@@ -33,21 +33,22 @@ class OrchestratorNode(DTROS):
             new_point.z = UNINITIALIZED
             self.shoe_poses.points.append(new_point)
 
+        self.veh = os.environ["VEHICLE_NAME"]
+        
         ## Construct publishers
         # Mission to execute
         self.decision_msg = rospy.Publisher(
-            "~mission",
+            f"/{self.veh}/orchestrator_node/mission",
             Polygon,
             queue_size=1,
             dt_topic_type=TopicType.BEHAVIOR,
         )
 
-        self.veh = os.environ["VEHICLE_NAME"]
 
         ## Construct subscribers
         # TODO: Shoe positions
         self.shoepos_msg = rospy.Subscriber(
-            f"/{self.veh}/robot_odometry/shoe_positions",
+            f"/{self.veh}/shoe_positions/shoes",
             PointCloud,
             self.shoepos_cb,
             #buff_size=10000,

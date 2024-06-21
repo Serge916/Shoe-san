@@ -14,6 +14,7 @@ from geometry_msgs.msg import Quaternion
 from camera_intrinsic.constants import DISTANCE
 from camera_intrinsic.model import Wrapper
 
+NUMBER_FRAMES_SKIPPED = 5
 
 class AprilTagsNode(DTROS):
     def __init__(self, node_name):
@@ -65,11 +66,17 @@ class AprilTagsNode(DTROS):
         self.pose.z = 0     # Angle of the April Tag with respect to the robot
         self.pose.w = 0     # Angle of the robot with respect to the orientation of the April Tag
 
+        self.frame_id = 0
         self.initialized = True
         self.log("Initialized!")
 
     def image_cb(self, img):
         if not self.initialized:
+            return
+        
+        self.frame_id += 1
+        self.frame_id = self.frame_id % (1 + NUMBER_FRAMES_SKIPPED)
+        if self.frame_id != 0:
             return
 
         # Access Image and bounding boxes
